@@ -1,55 +1,86 @@
 <svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="120" y1="54" x2="1109" y2="679" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0B1220"/>
-      <stop offset="1" stop-color="#14213D"/>
+    <linearGradient id="bg" x1="88" y1="46" x2="1182" y2="702" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#15213D"/>
     </linearGradient>
-    <linearGradient id="panel" x1="290" y1="118" x2="978" y2="599" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#18283F"/>
-      <stop offset="1" stop-color="#101A2C"/>
+    <linearGradient id="shell" x1="171" y1="80" x2="1114" y2="627" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A2640"/>
+      <stop offset="1" stop-color="#121A2D"/>
     </linearGradient>
-    <linearGradient id="accent" x1="183" y1="122" x2="832" y2="542" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#53D8FB"/>
-      <stop offset="1" stop-color="#0EA5E9"/>
+    <linearGradient id="heroCard" x1="120" y1="118" x2="530" y2="598" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#11182B"/>
+      <stop offset="1" stop-color="#0E1526"/>
     </linearGradient>
+    <linearGradient id="accent" x1="645" y1="204" x2="1125" y2="347" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1D4ED8"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="softShadow" x="72" y="61" width="1136" height="586" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="16"/>
+      <feGaussianBlur stdDeviation="12"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0156863 0 0 0 0 0.0470588 0 0 0 0 0.121569 0 0 0 0.32 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_1" result="shape"/>
+    </filter>
   </defs>
+
   <rect width="1280" height="720" rx="36" fill="url(#bg)"/>
-  <circle cx="1091" cy="90" r="120" fill="#1D4ED8" fill-opacity="0.15"/>
-  <circle cx="157" cy="623" r="154" fill="#06B6D4" fill-opacity="0.12"/>
-  <rect x="94" y="86" width="1092" height="548" rx="28" fill="url(#panel)" stroke="rgba(255,255,255,0.12)"/>
-  <rect x="134" y="126" width="352" height="468" rx="24" fill="#0D1525"/>
-  <text x="168" y="184" fill="#F8FAFC" font-family="SF Pro Display, Inter, Arial" font-size="54" font-weight="700">PortPilot</text>
-  <text x="168" y="232" fill="#94A3B8" font-family="SF Pro Text, Inter, Arial" font-size="22">One desktop console for local-first GitHub repos.</text>
-  <rect x="168" y="278" width="132" height="38" rx="19" fill="#0EA5E9"/>
-  <text x="196" y="303" fill="#F8FAFC" font-family="SF Pro Text, Inter, Arial" font-size="17" font-weight="700">Import</text>
-  <rect x="314" y="278" width="132" height="38" rx="19" fill="#1E293B"/>
-  <text x="339" y="303" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="17" font-weight="700">Run / Stop</text>
-  <text x="168" y="364" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="18" font-weight="600">GitHub repo intake</text>
-  <text x="168" y="392" fill="#94A3B8" font-family="SF Pro Text, Inter, Arial" font-size="16">Clone, inspect scripts, parse env files,</text>
-  <text x="168" y="416" fill="#94A3B8" font-family="SF Pro Text, Inter, Arial" font-size="16">and build a runnable project profile automatically.</text>
-  <text x="168" y="476" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="18" font-weight="600">Unified local routing</text>
-  <text x="168" y="504" fill="#94A3B8" font-family="SF Pro Text, Inter, Arial" font-size="16">Projects get a clean `.localhost` entrypoint</text>
-  <text x="168" y="528" fill="#94A3B8" font-family="SF Pro Text, Inter, Arial" font-size="16">with logs, ports, and health in one place.</text>
-  <rect x="532" y="126" width="614" height="220" rx="24" fill="#0D1525"/>
-  <rect x="532" y="376" width="292" height="218" rx="24" fill="#0D1525"/>
-  <rect x="854" y="376" width="292" height="218" rx="24" fill="#0D1525"/>
-  <rect x="566" y="166" width="156" height="28" rx="14" fill="#0EA5E9" fill-opacity="0.18"/>
-  <text x="586" y="185" fill="#67E8F9" font-family="SF Pro Text, Inter, Arial" font-size="14" font-weight="700">Dashboard</text>
-  <rect x="566" y="216" width="546" height="96" rx="20" fill="url(#accent)" fill-opacity="0.16"/>
-  <rect x="590" y="238" width="170" height="52" rx="16" fill="#082F49"/>
-  <text x="618" y="271" fill="#BAE6FD" font-family="SF Pro Text, Inter, Arial" font-size="18" font-weight="700">Crucix</text>
-  <rect x="776" y="238" width="160" height="52" rx="16" fill="#0F172A"/>
-  <text x="808" y="271" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="18" font-weight="700">worldmonitor</text>
-  <rect x="954" y="238" width="130" height="52" rx="16" fill="#1D4ED8"/>
-  <text x="991" y="271" fill="#EFF6FF" font-family="SF Pro Text, Inter, Arial" font-size="18" font-weight="700">Running</text>
-  <rect x="566" y="416" width="110" height="26" rx="13" fill="#0EA5E9" fill-opacity="0.18"/>
-  <text x="587" y="434" fill="#67E8F9" font-family="SF Pro Text, Inter, Arial" font-size="14" font-weight="700">Actions</text>
-  <rect x="566" y="466" width="224" height="36" rx="18" fill="#1E293B"/>
-  <text x="590" y="490" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="16">Install  Run  Build  Deploy</text>
-  <rect x="888" y="416" width="134" height="26" rx="13" fill="#0EA5E9" fill-opacity="0.18"/>
-  <text x="910" y="434" fill="#67E8F9" font-family="SF Pro Text, Inter, Arial" font-size="14" font-weight="700">Routes + Logs</text>
-  <rect x="888" y="466" width="224" height="36" rx="18" fill="#0F172A"/>
-  <text x="912" y="489" fill="#E2E8F0" font-family="SF Pro Text, Inter, Arial" font-size="15">gateway.localhost/p/crucix</text>
-  <text x="912" y="533" fill="#94A3B8" font-family="SF Mono, Menlo, monospace" font-size="14">[stdout] dev server ready on :3117</text>
-  <text x="912" y="559" fill="#94A3B8" font-family="SF Mono, Menlo, monospace" font-size="14">[route ] mapped to crucix.localhost</text>
+  <circle cx="1123" cy="77" r="128" fill="#2A4BFF" fill-opacity="0.13"/>
+  <circle cx="148" cy="640" r="174" fill="#38BDF8" fill-opacity="0.08"/>
+  <circle cx="965" cy="639" r="112" fill="#0EA5E9" fill-opacity="0.08"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="96" y="84" width="1088" height="548" rx="30" fill="url(#shell)" stroke="#2B3750"/>
+  </g>
+
+  <rect x="140" y="128" width="384" height="460" rx="28" fill="url(#heroCard)"/>
+  <text x="176" y="192" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="60" font-weight="700">PortPilot</text>
+  <text x="176" y="238" fill="#8FA2BE" font-family="Inter, Arial, sans-serif" font-size="20">One desktop command center for local-first GitHub repos.</text>
+
+  <rect x="176" y="278" width="140" height="44" rx="22" fill="#4CA7F1"/>
+  <text x="246" y="306" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Import</text>
+  <rect x="332" y="278" width="154" height="44" rx="22" fill="#222E45"/>
+  <text x="409" y="306" fill="#DFE7F2" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Run / Stop</text>
+
+  <rect x="176" y="352" width="312" height="88" rx="22" fill="#11192C"/>
+  <rect x="196" y="372" width="132" height="28" rx="14" fill="#18314A"/>
+  <text x="262" y="391" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">GitHub repo intake</text>
+  <text x="196" y="425" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">Clone, inspect scripts, parse env files,</text>
+  <text x="196" y="448" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">and build a runnable profile automatically.</text>
+
+  <rect x="176" y="468" width="312" height="88" rx="22" fill="#11192C"/>
+  <rect x="196" y="488" width="148" height="28" rx="14" fill="#18314A"/>
+  <text x="270" y="507" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Unified local routing</text>
+  <text x="196" y="541" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">Projects get one clean `.localhost` entrypoint</text>
+  <text x="196" y="564" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">with logs, ports, and health in sync.</text>
+
+  <rect x="572" y="128" width="624" height="240" rx="28" fill="#101827"/>
+  <rect x="608" y="170" width="166" height="32" rx="16" fill="#18314A"/>
+  <text x="691" y="191" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Dashboard</text>
+
+  <rect x="608" y="226" width="552" height="106" rx="24" fill="#1A2E48"/>
+  <rect x="638" y="248" width="188" height="62" rx="18" fill="#193855"/>
+  <text x="732" y="286" fill="#EAF4FF" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">Crucix</text>
+  <rect x="842" y="248" width="178" height="62" rx="18" fill="#151D33"/>
+  <text x="931" y="286" fill="#EAF0F8" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">worldmonitor</text>
+  <rect x="1036" y="248" width="124" height="62" rx="18" fill="url(#accent)"/>
+  <text x="1098" y="286" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">Running</text>
+
+  <rect x="572" y="396" width="294" height="192" rx="28" fill="#101827"/>
+  <rect x="608" y="430" width="126" height="30" rx="15" fill="#18314A"/>
+  <text x="671" y="450" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Actions</text>
+  <rect x="608" y="486" width="222" height="40" rx="20" fill="#222E45"/>
+  <text x="719" y="512" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">Install  Run  Build  Deploy</text>
+
+  <rect x="902" y="396" width="294" height="192" rx="28" fill="#101827"/>
+  <rect x="938" y="430" width="158" height="30" rx="15" fill="#18314A"/>
+  <text x="1017" y="450" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Routes + Logs</text>
+  <rect x="938" y="486" width="222" height="42" rx="18" fill="#151D33"/>
+  <text x="1049" y="512" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600" text-anchor="middle">gateway.localhost/p/crucix</text>
+  <text x="938" y="554" fill="#A3B1C7" font-family="Menlo, monospace" font-size="14">[stdout] dev server ready on :3117</text>
+  <text x="938" y="579" fill="#A3B1C7" font-family="Menlo, monospace" font-size="14">[route ] mapped to crucix.localhost</text>
 </svg>

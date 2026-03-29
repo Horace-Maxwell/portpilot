@@ -1,29 +1,42 @@
 <svg width="1280" height="760" viewBox="0 0 1280 760" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1280" height="760" rx="32" fill="#101826"/>
-  <rect x="32" y="32" width="1216" height="696" rx="28" fill="#14213D"/>
-  <rect x="64" y="64" width="558" height="632" rx="24" fill="#0F172A"/>
-  <rect x="658" y="64" width="558" height="300" rx="24" fill="#0F172A"/>
-  <rect x="658" y="396" width="558" height="300" rx="24" fill="#0F172A"/>
-  <text x="98" y="112" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Logs</text>
-  <text x="98" y="148" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Watch output without leaving the app</text>
-  <rect x="98" y="188" width="490" height="54" rx="16" fill="#111827"/>
-  <text x="124" y="222" fill="#A5F3FC" font-family="Menlo, monospace" font-size="16">[route] crucix.localhost -> 127.0.0.1:3117</text>
-  <rect x="98" y="254" width="490" height="54" rx="16" fill="#111827"/>
-  <text x="124" y="288" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">[stdout] Vite ready in 820 ms</text>
-  <rect x="98" y="320" width="490" height="54" rx="16" fill="#111827"/>
-  <text x="124" y="354" fill="#FDE68A" font-family="Menlo, monospace" font-size="16">[warn ] port 3000 busy, reassigning to 3117</text>
-  <rect x="98" y="386" width="490" height="54" rx="16" fill="#111827"/>
-  <text x="124" y="420" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">[stdout] healthcheck passed /</text>
-  <text x="692" y="112" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Routes</text>
-  <text x="692" y="148" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Human-friendly entrypoints</text>
-  <rect x="692" y="192" width="490" height="50" rx="16" fill="#111827"/>
-  <text x="718" y="224" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">http://crucix.localhost:42300</text>
-  <rect x="692" y="254" width="490" height="50" rx="16" fill="#111827"/>
-  <text x="718" y="286" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">http://gateway.localhost:42300/p/worldmonitor/</text>
-  <text x="692" y="444" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Ports</text>
-  <text x="692" y="480" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">See conflicts before they become chaos</text>
-  <rect x="692" y="524" width="490" height="50" rx="16" fill="#111827"/>
-  <text x="718" y="556" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">3117   Crucix         PID 81207     running</text>
-  <rect x="692" y="586" width="490" height="50" rx="16" fill="#111827"/>
-  <text x="718" y="618" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">42300  Gateway        PID 81242     running</text>
+  <defs>
+    <linearGradient id="obsBg" x1="84" y1="40" x2="1168" y2="734" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0C1324"/>
+      <stop offset="1" stop-color="#15233E"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="760" rx="32" fill="url(#obsBg)"/>
+  <circle cx="1118" cy="112" r="120" fill="#1E40AF" fill-opacity="0.12"/>
+  <rect x="32" y="32" width="1216" height="696" rx="28" fill="#141E34" stroke="#2A3550"/>
+
+  <rect x="64" y="64" width="560" height="632" rx="26" fill="#0E1628"/>
+  <rect x="656" y="64" width="560" height="298" rx="26" fill="#0E1628"/>
+  <rect x="656" y="398" width="560" height="298" rx="26" fill="#0E1628"/>
+
+  <text x="100" y="112" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Logs</text>
+  <text x="100" y="148" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Watch output without leaving the app</text>
+
+  <rect x="100" y="188" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="126" y="221" fill="#A4F1FF" font-family="Menlo, monospace" font-size="15">[route ] crucix.localhost -&gt; 127.0.0.1:3117</text>
+  <rect x="100" y="254" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="126" y="287" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">[stdout] Vite ready in 820 ms</text>
+  <rect x="100" y="320" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="126" y="353" fill="#FBD38D" font-family="Menlo, monospace" font-size="15">[warn  ] port 3000 busy, reassigning to 3117</text>
+  <rect x="100" y="386" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="126" y="419" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">[stdout] healthcheck passed /</text>
+
+  <text x="692" y="112" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Routes</text>
+  <text x="692" y="148" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Human-friendly entrypoints</text>
+  <rect x="692" y="188" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="718" y="221" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">http://crucix.localhost:42300</text>
+  <rect x="692" y="254" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="718" y="287" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">http://gateway.localhost:42300/p/worldmonitor/</text>
+
+  <text x="692" y="446" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Ports</text>
+  <text x="692" y="482" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">See conflicts before they become chaos</text>
+  <rect x="692" y="522" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="718" y="555" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">3117   Crucix      PID 81207      running</text>
+  <rect x="692" y="588" width="488" height="54" rx="16" fill="#121D31"/>
+  <text x="718" y="621" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">42300  Gateway     PID 81242      running</text>
 </svg>

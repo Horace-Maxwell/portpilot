@@ -1,40 +1,60 @@
 <svg width="1280" height="760" viewBox="0 0 1280 760" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1280" height="760" rx="32" fill="#0F172A"/>
-  <rect x="32" y="32" width="1216" height="696" rx="28" fill="#111C31"/>
-  <rect x="64" y="64" width="230" height="632" rx="22" fill="#0B1220"/>
-  <text x="92" y="112" fill="#F8FAFC" font-family="Inter, Arial" font-size="32" font-weight="700">PortPilot</text>
-  <text x="92" y="145" fill="#64748B" font-family="Inter, Arial" font-size="16">Dashboard</text>
-  <rect x="92" y="186" width="170" height="40" rx="20" fill="#0EA5E9" fill-opacity="0.22"/>
-  <text x="122" y="212" fill="#67E8F9" font-family="Inter, Arial" font-size="17" font-weight="700">Running 2 / 3</text>
-  <rect x="330" y="64" width="886" height="110" rx="22" fill="#0B1220"/>
-  <text x="366" y="112" fill="#F8FAFC" font-family="Inter, Arial" font-size="32" font-weight="700">Control every repo from one window</text>
-  <text x="366" y="145" fill="#94A3B8" font-family="Inter, Arial" font-size="18">Import from GitHub, hydrate env files, run actions, and watch routes update live.</text>
-  <rect x="330" y="202" width="426" height="226" rx="24" fill="#0B1220"/>
-  <rect x="790" y="202" width="426" height="226" rx="24" fill="#0B1220"/>
-  <rect x="330" y="456" width="886" height="240" rx="24" fill="#0B1220"/>
-  <text x="366" y="248" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Project A</text>
-  <text x="366" y="286" fill="#F8FAFC" font-family="Inter, Arial" font-size="28" font-weight="700">Crucix</text>
-  <text x="366" y="318" fill="#94A3B8" font-family="Inter, Arial" font-size="18">Imported from GitHub, env parsed, route online.</text>
-  <rect x="366" y="348" width="110" height="38" rx="19" fill="#0284C7"/>
-  <text x="399" y="372" fill="#F8FAFC" font-family="Inter, Arial" font-size="16" font-weight="700">Open</text>
-  <rect x="488" y="348" width="110" height="38" rx="19" fill="#1E293B"/>
-  <text x="521" y="372" fill="#E2E8F0" font-family="Inter, Arial" font-size="16" font-weight="700">Build</text>
-  <rect x="610" y="348" width="110" height="38" rx="19" fill="#14532D"/>
-  <text x="639" y="372" fill="#DCFCE7" font-family="Inter, Arial" font-size="16" font-weight="700">Running</text>
-  <text x="826" y="248" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Project B</text>
-  <text x="826" y="286" fill="#F8FAFC" font-family="Inter, Arial" font-size="28" font-weight="700">worldmonitor</text>
-  <text x="826" y="318" fill="#94A3B8" font-family="Inter, Arial" font-size="18">Web + desktop actions surfaced automatically.</text>
-  <rect x="826" y="348" width="150" height="38" rx="19" fill="#1D4ED8"/>
-  <text x="855" y="372" fill="#EFF6FF" font-family="Inter, Arial" font-size="16" font-weight="700">desktop:dev</text>
-  <rect x="988" y="348" width="162" height="38" rx="19" fill="#1E293B"/>
-  <text x="1018" y="372" fill="#E2E8F0" font-family="Inter, Arial" font-size="16" font-weight="700">desktop:build</text>
-  <text x="366" y="504" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Runtime overview</text>
-  <text x="366" y="542" fill="#F8FAFC" font-family="Inter, Arial" font-size="28" font-weight="700">Routes, logs, and ports stay in sync</text>
-  <text x="366" y="578" fill="#94A3B8" font-family="Inter, Arial" font-size="18">No more jumping between terminals, browser tabs, and `lsof` output.</text>
-  <rect x="366" y="610" width="258" height="48" rx="18" fill="#0F172A"/>
-  <text x="390" y="640" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">crucix.localhost:42300</text>
-  <rect x="644" y="610" width="258" height="48" rx="18" fill="#0F172A"/>
-  <text x="670" y="640" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">PID 81207  port 3117</text>
-  <rect x="922" y="610" width="258" height="48" rx="18" fill="#0F172A"/>
-  <text x="952" y="640" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">stdout tail live</text>
+  <defs>
+    <linearGradient id="dashBg" x1="111" y1="52" x2="1174" y2="722" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0C1323"/>
+      <stop offset="1" stop-color="#15223E"/>
+    </linearGradient>
+    <linearGradient id="panelGlow" x1="369" y1="190" x2="1142" y2="662" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16304C"/>
+      <stop offset="1" stop-color="#101827"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="760" rx="32" fill="url(#dashBg)"/>
+  <circle cx="1136" cy="106" r="118" fill="#1D4ED8" fill-opacity="0.12"/>
+  <circle cx="120" cy="644" r="148" fill="#0EA5E9" fill-opacity="0.08"/>
+  <rect x="34" y="34" width="1212" height="692" rx="28" fill="#131D33" stroke="#2A3550"/>
+
+  <rect x="68" y="68" width="232" height="624" rx="24" fill="#0D1525"/>
+  <text x="98" y="116" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">PortPilot</text>
+  <text x="98" y="146" fill="#7386A3" font-family="Inter, Arial, sans-serif" font-size="16">Dashboard</text>
+  <rect x="98" y="184" width="168" height="42" rx="21" fill="#17314C"/>
+  <text x="182" y="211" fill="#77D6FF" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Running 2 / 3</text>
+
+  <rect x="336" y="68" width="878" height="118" rx="24" fill="#0D1525"/>
+  <text x="372" y="118" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">Control every repo from one window</text>
+  <text x="372" y="150" fill="#8DA1BE" font-family="Inter, Arial, sans-serif" font-size="18">Import from GitHub, hydrate env files, run actions, and keep routes visible while everything is live.</text>
+
+  <rect x="336" y="214" width="426" height="228" rx="26" fill="url(#panelGlow)"/>
+  <rect x="790" y="214" width="424" height="228" rx="26" fill="#0D1525"/>
+  <rect x="336" y="470" width="878" height="222" rx="26" fill="#0D1525"/>
+
+  <text x="372" y="258" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Project A</text>
+  <text x="372" y="294" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700">Crucix</text>
+  <text x="372" y="327" fill="#8DA1BE" font-family="Inter, Arial, sans-serif" font-size="18">Imported from GitHub, env parsed, route online, and ready for a one-click run.</text>
+  <rect x="372" y="360" width="114" height="42" rx="21" fill="#1790D5"/>
+  <text x="429" y="387" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Open</text>
+  <rect x="500" y="360" width="114" height="42" rx="21" fill="#202B41"/>
+  <text x="557" y="387" fill="#E5ECF6" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Build</text>
+  <rect x="628" y="360" width="104" height="42" rx="21" fill="#153E2B"/>
+  <text x="680" y="387" fill="#D6FBE4" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Running</text>
+
+  <text x="826" y="258" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Project B</text>
+  <text x="826" y="294" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700">worldmonitor</text>
+  <text x="826" y="327" fill="#8DA1BE" font-family="Inter, Arial, sans-serif" font-size="18">Surface web and desktop actions together instead of hiding them in multiple README sections.</text>
+  <rect x="826" y="360" width="148" height="42" rx="21" fill="#214FD8"/>
+  <text x="900" y="387" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">desktop:dev</text>
+  <rect x="990" y="360" width="170" height="42" rx="21" fill="#202B41"/>
+  <text x="1075" y="387" fill="#E5ECF6" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">desktop:build</text>
+
+  <text x="372" y="514" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Runtime overview</text>
+  <text x="372" y="550" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700">Routes, logs, and ports stay in sync</text>
+  <text x="372" y="583" fill="#8DA1BE" font-family="Inter, Arial, sans-serif" font-size="18">No more bouncing between terminals, browser tabs, and `lsof` output.</text>
+
+  <rect x="372" y="616" width="246" height="46" rx="18" fill="#101827"/>
+  <text x="495" y="645" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15" text-anchor="middle">crucix.localhost:42300</text>
+  <rect x="652" y="616" width="246" height="46" rx="18" fill="#101827"/>
+  <text x="775" y="645" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15" text-anchor="middle">PID 81207   port 3117</text>
+  <rect x="932" y="616" width="246" height="46" rx="18" fill="#101827"/>
+  <text x="1055" y="645" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15" text-anchor="middle">stdout tail live</text>
 </svg>
