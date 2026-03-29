@@ -12,6 +12,9 @@ concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: true
 
+env:
+  IS_BETA: ${{ contains(github.ref_name, '-beta.') }}
+
 jobs:
   build:
     name: Build ${{ matrix.os }}
@@ -82,7 +85,7 @@ jobs:
           fi
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.IS_BETA != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -107,8 +110,12 @@ jobs:
           fi
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
-      - name: Build Tauri app (macOS)
-        if: runner.os == 'macOS'
+      - name: Build Tauri app (macOS beta)
+        if: runner.os == 'macOS' && env.IS_BETA == 'true'
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Build Tauri app (macOS stable)
+        if: runner.os == 'macOS' && env.IS_BETA != 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -137,7 +144,9 @@ jobs:
           APP_PATH=$(find "$MAC_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
           DMG_PATH=$(find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -type f | head -1)
           cp "$TAR_GZ" "release-assets/PortPilot-${VERSION}-macOS.tar.gz"
-          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/PortPilot-${VERSION}-macOS.tar.gz.sig"
+          if [ -f "$TAR_GZ.sig" ]; then
+            cp "$TAR_GZ.sig" "release-assets/PortPilot-${VERSION}-macOS.tar.gz.sig"
+          fi
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/PortPilot-${VERSION}-macOS.zip"
           cp "$DMG_PATH" "release-assets/PortPilot-${VERSION}-macOS.dmg"
 
@@ -175,7 +184,9 @@ jobs:
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
             cp "$APPIMAGE" "release-assets/PortPilot-${VERSION}-Linux-x86_64.AppImage"
-            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/PortPilot-${VERSION}-Linux-x86_64.AppImage.sig"
+            if [ -f "$APPIMAGE.sig" ]; then
+              cp "$APPIMAGE.sig" "release-assets/PortPilot-${VERSION}-Linux-x86_64.AppImage.sig"
+            fi
           fi
           if [ -n "$DEB" ]; then
             cp "$DEB" "release-assets/PortPilot-${VERSION}-Linux-x86_64.deb"
@@ -205,28 +216,77 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+            import os
+            import textwrap
+            from pathlib import Path
+
+            version = os.environ["GITHUB_REF_NAME"]
+            is_beta = "-beta." in version
+            if is_beta:
+                body = textwrap.dedent(
+                    f"""\
+                    ## PortPilot {version}
+
+                    First public beta for PortPilot, a desktop control console for local-first GitHub repositories.
+
+                    ### Included in this beta
+
+                    - GitHub repo import and local project registration
+                    - inferred install, run, build, deploy, and package actions
+                    - env template parsing and local env profile editing
+                    - unified `.localhost` routing, logs, ports, and runtime visibility
+
+                    ### Download notes
+
+                    - macOS: beta installer is **not notarized yet**, so first launch may require manual approval in System Settings
+                    - Windows and Linux packages are beta validation builds
+                    - stable in-app auto-update will be finalized in the signed stable channel
+
+                    ### Assets
+
+                    - macOS: `PortPilot-{version}-macOS.dmg`, `PortPilot-{version}-macOS.zip`
+                    - Windows: `PortPilot-{version}-Windows.msi`, optional portable zip
+                    - Linux: `PortPilot-{version}-Linux-x86_64.AppImage`, `.deb`, `.rpm`
+                    """
+                )
+            else:
+                body = textwrap.dedent(
+                    f"""\
+                    ## PortPilot {version}
+
+                    Stable cross-platform release for PortPilot.
+
+                    ### Highlights
+
+                    - desktop repo control workflow for local-first GitHub projects
+                    - unified routing, logs, ports, and action execution
+                    - signed updater assets and `latest.json` feed for in-app updates
+                    """
+                )
+
+            Path("release-notes.md").write_text(body, encoding="utf-8")
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fh:
+                fh.write(f"prerelease={'true' if is_beta else 'false'}\n")
+          PY
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: PortPilot ${{ github.ref_name }}
-          prerelease: true
-          body: |
-            ## PortPilot ${{ github.ref_name }}
-
-            Cross-platform repo control console for local-first GitHub projects.
-
-            ### Downloads
-
-            - macOS: `PortPilot-${{ github.ref_name }}-macOS.dmg` or `.zip`
-            - Windows: `PortPilot-${{ github.ref_name }}-Windows.msi`
-            - Linux: `PortPilot-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
-
-            `.tar.gz`, `.msi.sig`, and `.AppImage.sig` are updater assets for the in-app update flow.
+          prerelease: ${{ steps.notes.outputs.prerelease }}
+          body_path: release-notes.md
           files: release-assets/*
 
   assemble-latest-json:
     name: Assemble latest.json
+    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: ubuntu-22.04
     needs: publish-release
     permissions:

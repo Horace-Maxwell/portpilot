@@ -1,0 +1,33 @@
+<svg width="1280" height="760" viewBox="0 0 1280 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="760" rx="32" fill="#0B1220"/>
+  <rect x="30" y="30" width="1220" height="700" rx="28" fill="#111C31"/>
+  <rect x="60" y="60" width="1160" height="74" rx="20" fill="#0F172A"/>
+  <text x="92" y="106" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Project details</text>
+  <text x="308" y="106" fill="#64748B" font-family="Inter, Arial" font-size="18">Actions  Environment  Runtime</text>
+  <rect x="60" y="162" width="520" height="538" rx="24" fill="#0F172A"/>
+  <rect x="608" y="162" width="612" height="252" rx="24" fill="#0F172A"/>
+  <rect x="608" y="446" width="612" height="254" rx="24" fill="#0F172A"/>
+  <text x="96" y="212" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Action groups</text>
+  <text x="96" y="248" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Install, run, build, deploy</text>
+  <rect x="96" y="284" width="446" height="86" rx="20" fill="#111827"/>
+  <text x="122" y="320" fill="#F8FAFC" font-family="Inter, Arial" font-size="18" font-weight="700">npm install</text>
+  <text x="122" y="348" fill="#94A3B8" font-family="Menlo, monospace" font-size="15">kind: install   source: inferred</text>
+  <rect x="96" y="392" width="446" height="86" rx="20" fill="#111827"/>
+  <text x="122" y="428" fill="#F8FAFC" font-family="Inter, Arial" font-size="18" font-weight="700">npm run dev</text>
+  <text x="122" y="456" fill="#94A3B8" font-family="Menlo, monospace" font-size="15">kind: run   route: /p/crucix   port hint: 3117</text>
+  <rect x="96" y="500" width="446" height="86" rx="20" fill="#111827"/>
+  <text x="122" y="536" fill="#F8FAFC" font-family="Inter, Arial" font-size="18" font-weight="700">docker compose up -d</text>
+  <text x="122" y="564" fill="#94A3B8" font-family="Menlo, monospace" font-size="15">kind: deploy   source: inferred</text>
+  <text x="644" y="212" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Environment</text>
+  <text x="644" y="248" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Template-driven env editing</text>
+  <rect x="644" y="284" width="540" height="48" rx="16" fill="#111827"/>
+  <text x="668" y="314" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">OPENAI_API_KEY = **************</text>
+  <rect x="644" y="344" width="540" height="48" rx="16" fill="#111827"/>
+  <text x="668" y="374" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">NEXT_PUBLIC_BASE_URL = http://localhost:3117</text>
+  <text x="644" y="496" fill="#38BDF8" font-family="Inter, Arial" font-size="16" font-weight="700">Runtime</text>
+  <text x="644" y="532" fill="#F8FAFC" font-family="Inter, Arial" font-size="30" font-weight="700">Live execution history</text>
+  <rect x="644" y="568" width="540" height="48" rx="16" fill="#111827"/>
+  <text x="668" y="598" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">10:42  npm run dev  running  PID 81207</text>
+  <rect x="644" y="628" width="540" height="48" rx="16" fill="#111827"/>
+  <text x="668" y="658" fill="#E2E8F0" font-family="Menlo, monospace" font-size="16">10:43  open  gateway.localhost/p/crucix</text>
+</svg>

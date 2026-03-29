@@ -1,42 +1,120 @@
-# PortPilot
+[简体中文](./README.zh-CN.md) | **English**
 
-PortPilot is a cross-platform desktop control console for local-first GitHub repositories.
+<div align="center">
+  <h1>PortPilot</h1>
+  <p><strong>Run, stop, route, and observe local-first GitHub repos from one desktop app.</strong></p>
+  <p>PortPilot turns scattered terminal commands, random localhost ports, env templates, and build scripts into one coherent control center.</p>
 
-It is built for workflows like:
+  <p>
+    <img src="https://img.shields.io/github/v/release/Horace-Maxwell/portpilot?include_prereleases&display_name=tag&style=for-the-badge" alt="Release" />
+    <img src="https://img.shields.io/github/license/Horace-Maxwell/portpilot?style=for-the-badge" alt="License" />
+    <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-0f766e?style=for-the-badge" alt="Platforms" />
+    <img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?style=for-the-badge&logo=tauri" alt="Tauri" />
+    <img src="https://img.shields.io/badge/Rust-core-black?style=for-the-badge&logo=rust" alt="Rust" />
+    <img src="https://img.shields.io/badge/TypeScript-UI-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  </p>
+</div>
 
-- import `calesthio/Crucix`
-- import `koala73/worldmonitor`
-- detect install / run / build / deploy commands
-- generate `.env` from `.env.example`
-- start or stop local services from one UI
-- route projects through a unified local gateway
-- ship updates through GitHub Releases and the built-in updater
+![PortPilot hero](./docs/media/hero-banner.svg)
 
-## What PortPilot does
+## Why PortPilot
 
-- clone a repository directly from GitHub or register an existing local repo
-- infer actions for Node, Python, Rust, Go, and Docker Compose projects
-- persist project definitions, action metadata, env profiles, and execution history in SQLite
-- stream stdout/stderr into the app
-- expose managed apps on `.localhost` routes
-- check for updates and install them from GitHub Releases
+Most local web projects still expect you to stitch the workflow together by hand:
 
-## Stack
+- clone a repo
+- read the README
+- guess the right install command
+- hunt for `.env.example`
+- find an open port
+- open another terminal for logs
+- remember which command stops everything later
 
-- Tauri 2
-- Rust
-- SQLite via `rusqlite`
-- Preact + TypeScript + Vite
-- GitHub Releases + `latest.json` updater feed
+PortPilot is the opposite approach. It gives GitHub repos a desktop control plane with:
 
-## Development
+- GitHub import and local project registration
+- inferred install, run, build, deploy, and package actions
+- env template parsing and `.env` generation
+- unified `.localhost` routes
+- live logs, execution history, and port visibility
+- a release-ready desktop shell for macOS, Windows, and Linux
+
+## Showcase
+
+PortPilot is designed for repos like these:
+
+| Repository | What PortPilot surfaces |
+| --- | --- |
+| [`calesthio/Crucix`](https://github.com/calesthio/Crucix) | `npm install`, `npm run dev`, env generation, compose actions, unified route opening |
+| [`koala73/worldmonitor`](https://github.com/koala73/worldmonitor) | web run targets, `desktop:dev`, `build:*`, `desktop:build:*`, local runtime visibility |
+
+## Product Preview
+
+### One dashboard, multiple repos
+
+![Dashboard preview](./docs/media/dashboard-preview.svg)
+
+### Action-centric project pages
+
+![Actions preview](./docs/media/actions-preview.svg)
+
+### Routes, logs, and ports in one place
+
+![Observability preview](./docs/media/observability-preview.svg)
+
+## Feature Map
+
+| Area | What you get |
+| --- | --- |
+| Import | Clone from GitHub URL or register an existing local project |
+| Detection | Infer actions for Node, Python, Rust, Go, and Docker Compose |
+| Environment | Parse `.env.example` and save editable env profiles |
+| Runtime | Start, stop, restart, build, deploy, and watch execution history |
+| Routing | Map projects onto clean `.localhost` URLs through a local gateway |
+| Observability | View logs, ports, status, and route bindings inside one UI |
+| Updates | Release through GitHub Releases and prepare in-app updater flow |
+
+## Quick Start
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-## Verification
+Then:
+
+1. Add or confirm your workspace root.
+2. Paste a GitHub URL like `https://github.com/calesthio/Crucix.git`.
+3. Import the repo, review inferred actions, save env values, and hit `Run`.
+
+## Downloads
+
+The first public release is published as a GitHub pre-release.
+
+- Go to [Releases](https://github.com/Horace-Maxwell/portpilot/releases)
+- Download the package for your platform
+- On the first macOS beta launch, you may need to manually allow the app in System Settings because the beta build is not notarized yet
+
+### Planned release assets
+
+- macOS: `.dmg`, `.zip`, updater `.tar.gz`
+- Windows x64: `.msi`, optional portable `.zip`
+- Linux x64: `.AppImage`, `.deb`, `.rpm`
+
+## Beta Notes
+
+- `v0.1.0-beta.1` is intended as the first public validation build
+- macOS beta packages may show Gatekeeper warnings before the notarized channel is ready
+- Windows and Linux packages are beta-quality validation builds
+- stable in-app auto-update is reserved for the signed/notarized stable channel
+
+## Roadmap
+
+- Better repo inference for more monorepo layouts
+- Stronger Docker and Compose orchestration
+- Signed + notarized stable macOS release flow
+- Polished release updater experience for all supported platforms
+
+## Development
 
 ```bash
 npm run typecheck
@@ -45,40 +123,10 @@ npm run build
 npm run tauri build -- --debug
 ```
 
-## Release outputs
+## Contributing
 
-Primary release targets:
+Issues and PRs are welcome, especially around repo detection, action inference, runtime orchestration, and cross-platform packaging.
 
-- macOS universal: `.dmg`, `.zip`, updater `.tar.gz`
-- Windows x64: `.msi`, optional portable `.zip`
-- Linux x64: `.AppImage`, `.deb`, `.rpm`
+## License
 
-Updater targets:
-
-- macOS: signed updater `.tar.gz`
-- Windows: signed `.msi`
-- Linux: signed `.AppImage`
-
-## Auto update
-
-PortPilot uses the Tauri updater and GitHub Releases.
-
-- release assets are uploaded to GitHub Releases
-- `latest.json` is generated in CI and attached to the release
-- the desktop app checks `https://github.com/Horace-Maxwell/portpilot/releases/latest/download/latest.json`
-- installed builds can download and install new versions inside the app
-
-## GitHub Actions secrets
-
-The release workflow expects these secrets:
-
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key is password protected
-- `APPLE_CERTIFICATE`
-- `APPLE_CERTIFICATE_PASSWORD`
-- `APPLE_ID`
-- `APPLE_PASSWORD`
-- `APPLE_TEAM_ID`
-- `KEYCHAIN_PASSWORD`
-
-Windows code signing is optional for v1. macOS signing and notarization are expected for the public installer flow.
+MIT. See [LICENSE](./LICENSE).

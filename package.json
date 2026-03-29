@@ -2,7 +2,13 @@
   "name": "portpilot",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Horace-Maxwell/portpilot.git"
+  },
+  "homepage": "https://github.com/Horace-Maxwell/portpilot",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
