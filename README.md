@@ -111,6 +111,7 @@ PortPilot is available now as a public GitHub beta release.
 - P2: shareable project recipes, preview tunnels, and extensible stack-specific inference
 
 See the full prioritized roadmap in [docs/product-roadmap.md](./docs/product-roadmap.md).
+The implementation breakdown lives in [docs/execution-plan.md](./docs/execution-plan.md), and the stable release checklist lives in [docs/release-runbook.md](./docs/release-runbook.md).
 
 ## Development
 

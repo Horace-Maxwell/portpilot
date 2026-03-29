@@ -111,6 +111,7 @@ PortPilot 现在已经以 GitHub 公开 Beta 的形式提供下载。
 - P2：项目 recipe、预览分享 tunnel、以及更可扩展的技术栈推断能力
 
 完整优先级路线图见 [docs/product-roadmap.zh-CN.md](./docs/product-roadmap.zh-CN.md)。
+更具体的实施拆解见 [docs/execution-plan.md](./docs/execution-plan.md)，稳定版发布操作手册见 [docs/release-runbook.md](./docs/release-runbook.md)。
 
 ## 开发校验
 
