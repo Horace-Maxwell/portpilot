@@ -112,6 +112,7 @@ PortPilot 现在已经以 GitHub 公开 Beta 的形式提供下载。
 
 完整优先级路线图见 [docs/product-roadmap.zh-CN.md](./docs/product-roadmap.zh-CN.md)。
 更具体的实施拆解见 [docs/execution-plan.md](./docs/execution-plan.md)，稳定版发布操作手册见 [docs/release-runbook.md](./docs/release-runbook.md)。
+带来源的竞品研究见 [docs/competitive-research.zh-CN.md](./docs/competitive-research.zh-CN.md)。
 
 ## 开发校验
 
