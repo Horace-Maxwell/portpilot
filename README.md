@@ -2,16 +2,27 @@
 
 <div align="center">
   <h1>PortPilot</h1>
-  <p><strong>Run, stop, route, and observe local-first GitHub repos from one desktop app.</strong></p>
-  <p>PortPilot turns scattered terminal commands, random localhost ports, env templates, and build scripts into one coherent control center.</p>
+  <p><strong>The desktop control plane for local-first GitHub repos.</strong></p>
+  <p>Import a repo, fill env values, run the right command, route it to a clean <code>.localhost</code> URL, and keep logs, ports, and health in one place.</p>
+
+  <p>
+    <a href="https://github.com/Horace-Maxwell/portpilot/releases/tag/v0.1.0-beta.1">
+      <img src="https://img.shields.io/badge/Download-Beta-0f172a?style=for-the-badge&logo=github" alt="Download Beta" />
+    </a>
+    <a href="https://github.com/Horace-Maxwell/portpilot/releases">
+      <img src="https://img.shields.io/badge/Browse-Releases-1d4ed8?style=for-the-badge&logo=github" alt="Browse Releases" />
+    </a>
+    <a href="./README.zh-CN.md">
+      <img src="https://img.shields.io/badge/Read%20in-Chinese-0f766e?style=for-the-badge" alt="Read in Chinese" />
+    </a>
+  </p>
 
   <p>
     <img src="https://img.shields.io/github/v/release/Horace-Maxwell/portpilot?include_prereleases&display_name=tag&style=for-the-badge" alt="Release" />
-    <img src="https://img.shields.io/github/license/Horace-Maxwell/portpilot?style=for-the-badge" alt="License" />
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-0f766e?style=for-the-badge" alt="Platforms" />
     <img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?style=for-the-badge&logo=tauri" alt="Tauri" />
-    <img src="https://img.shields.io/badge/Rust-core-black?style=for-the-badge&logo=rust" alt="Rust" />
-    <img src="https://img.shields.io/badge/TypeScript-UI-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Rust%20%2B%20TypeScript-core%20stack-111827?style=for-the-badge&logo=rust" alt="Rust and TypeScript" />
+    <img src="https://img.shields.io/github/license/Horace-Maxwell/portpilot?style=for-the-badge" alt="License" />
   </p>
 </div>
 
@@ -19,28 +30,13 @@
 
 ## Why PortPilot
 
-Most local web projects still expect you to stitch the workflow together by hand:
+| Import once | Control from one place | Observe without guesswork |
+| --- | --- | --- |
+| Turn GitHub URLs and local folders into runnable project profiles. | Start, stop, build, deploy, and route repos without juggling terminals. | Keep routes, logs, ports, and runtime status inside one desktop surface. |
 
-- clone a repo
-- read the README
-- guess the right install command
-- hunt for `.env.example`
-- find an open port
-- open another terminal for logs
-- remember which command stops everything later
+## Works With Real Repos
 
-PortPilot is the opposite approach. It gives GitHub repos a desktop control plane with:
-
-- GitHub import and local project registration
-- inferred install, run, build, deploy, and package actions
-- env template parsing and `.env` generation
-- unified `.localhost` routes
-- live logs, execution history, and port visibility
-- a release-ready desktop shell for macOS, Windows, and Linux
-
-## Showcase
-
-PortPilot is designed for repos like these:
+PortPilot is built around the kinds of projects people actually clone and try to run:
 
 | Repository | What PortPilot surfaces |
 | --- | --- |
@@ -88,16 +84,16 @@ Then:
 
 ## Downloads
 
-The first public release is published as a GitHub pre-release.
+PortPilot is available now as a public GitHub beta release.
 
 - Go to [Releases](https://github.com/Horace-Maxwell/portpilot/releases)
-- Download the package for your platform
+- Download the package for your platform: macOS `.dmg`, Windows `.msi`, or Linux `.AppImage`
 - On the first macOS beta launch, you may need to manually allow the app in System Settings because the beta build is not notarized yet
 
-### Planned release assets
+### Beta asset set
 
 - macOS: `.dmg`, `.zip`, updater `.tar.gz`
-- Windows x64: `.msi`, optional portable `.zip`
+- Windows x64: `.msi`, optional `.zip`
 - Linux x64: `.AppImage`, `.deb`, `.rpm`
 
 ## Beta Notes

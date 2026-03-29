@@ -2,43 +2,39 @@
 
 <div align="center">
   <h1>PortPilot</h1>
-  <p><strong>把本地 GitHub 项目的运行、停止、路由、日志和端口，收进一个桌面控制台。</strong></p>
-  <p>PortPilot 想解决的不是“再开一个 localhost 标签页”，而是把导入仓库、补环境变量、启动脚本、统一访问地址、查看日志这些零散动作整合成一个稳定工作流。</p>
+  <p><strong>为本地优先 GitHub 仓库准备的桌面控制台。</strong></p>
+  <p>导入仓库、填写环境变量、运行正确命令、分配干净的 <code>.localhost</code> 地址，再把日志、端口和健康状态收进一个界面里。</p>
+
+  <p>
+    <a href="https://github.com/Horace-Maxwell/portpilot/releases/tag/v0.1.0-beta.1">
+      <img src="https://img.shields.io/badge/Download-Beta-0f172a?style=for-the-badge&logo=github" alt="Download Beta" />
+    </a>
+    <a href="https://github.com/Horace-Maxwell/portpilot/releases">
+      <img src="https://img.shields.io/badge/Browse-Releases-1d4ed8?style=for-the-badge&logo=github" alt="Browse Releases" />
+    </a>
+    <a href="./README.md">
+      <img src="https://img.shields.io/badge/Read%20in-English-0f766e?style=for-the-badge" alt="Read in English" />
+    </a>
+  </p>
 
   <p>
     <img src="https://img.shields.io/github/v/release/Horace-Maxwell/portpilot?include_prereleases&display_name=tag&style=for-the-badge" alt="Release" />
-    <img src="https://img.shields.io/github/license/Horace-Maxwell/portpilot?style=for-the-badge" alt="License" />
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-0f766e?style=for-the-badge" alt="Platforms" />
     <img src="https://img.shields.io/badge/Tauri-2.x-24C8DB?style=for-the-badge&logo=tauri" alt="Tauri" />
-    <img src="https://img.shields.io/badge/Rust-core-black?style=for-the-badge&logo=rust" alt="Rust" />
-    <img src="https://img.shields.io/badge/TypeScript-UI-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Rust%20%2B%20TypeScript-core%20stack-111827?style=for-the-badge&logo=rust" alt="Rust and TypeScript" />
+    <img src="https://img.shields.io/github/license/Horace-Maxwell/portpilot?style=for-the-badge" alt="License" />
   </p>
 </div>
 
 ![PortPilot hero](./docs/media/hero-banner.svg)
 
-## PortPilot 解决什么问题
+## 为什么是 PortPilot
 
-很多本地网页项目直到今天还是这样运行的：
+| 一次导入 | 一个地方控制 | 一眼看到运行态 |
+| --- | --- | --- |
+| 把 GitHub URL 和本地目录整理成可运行的项目档案。 | 不再来回切终端，直接执行 run、stop、build、deploy。 | 在同一块桌面里查看路由、日志、端口和状态。 |
 
-- 先 `git clone`
-- 再看 README 猜怎么装依赖
-- 手动复制 `.env.example`
-- 自己找没被占用的端口
-- 打开浏览器访问 `localhost:xxxx`
-- 再回另一个终端看日志
-- 最后忘了哪个命令能把它停掉
-
-PortPilot 想把这条链路变成一个桌面产品：
-
-- 支持 GitHub URL 导入和本地项目注册
-- 自动识别 install / run / build / deploy / package 动作
-- 解析 `.env.example` 并生成可编辑环境变量表单
-- 给项目分配统一 `.localhost` 访问地址
-- 在一个界面里看日志、端口、运行状态和路由
-- 作为可发布的 macOS / Windows / Linux 桌面应用持续演进
-
-## 真实场景
+## 真实项目验证
 
 PortPilot 的目标就是让这类仓库更容易被一键接管：
 
@@ -88,16 +84,16 @@ npm run tauri:dev
 
 ## 下载与安装
 
-首个公开版本会以 GitHub pre-release 的形式发布。
+PortPilot 现在已经以 GitHub 公开 Beta 的形式提供下载。
 
 - 进入 [Releases](https://github.com/Horace-Maxwell/portpilot/releases)
-- 下载你平台对应的安装包
+- 下载你平台对应的主安装包：macOS `.dmg`、Windows `.msi` 或 Linux `.AppImage`
 - macOS Beta 首次打开时，如果系统拦截，需要去系统设置里手动允许，因为这一版还不是已公证安装包
 
-### 计划中的发布资产
+### 当前 Beta 资产
 
 - macOS: `.dmg`, `.zip`, updater `.tar.gz`
-- Windows x64: `.msi`, 可选 portable `.zip`
+- Windows x64: `.msi`, 可选 `.zip`
 - Linux x64: `.AppImage`, `.deb`, `.rpm`
 
 ## Beta 说明
