@@ -42,16 +42,16 @@
   <text x="480" y="538" fill="#DCE8F6" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Preview</text>
 
   <text x="644" y="212" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Environment</text>
-  <text x="644" y="248" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Template-driven env editing</text>
+  <text x="644" y="248" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Template-driven env editing</text>
   <rect x="644" y="286" width="540" height="50" rx="16" fill="#121D31"/>
-  <text x="668" y="318" fill="#E5ECF6" font-family="Menlo, monospace" font-size="16">OPENAI_API_KEY = **************</text>
+  <text x="668" y="318" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">OPENAI_API_KEY = **************</text>
   <rect x="644" y="348" width="540" height="50" rx="16" fill="#121D31"/>
-  <text x="668" y="380" fill="#E5ECF6" font-family="Menlo, monospace" font-size="16">NEXT_PUBLIC_BASE_URL = http://localhost:3117</text>
+  <text x="668" y="380" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">NEXT_PUBLIC_BASE_URL = http://localhost:3117</text>
 
   <text x="644" y="494" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Runtime</text>
-  <text x="644" y="530" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Live execution history</text>
+  <text x="644" y="530" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Live execution history</text>
   <rect x="644" y="568" width="540" height="50" rx="16" fill="#121D31"/>
-  <text x="668" y="600" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">10:42  npm run dev       running   PID 81207</text>
+  <text x="668" y="600" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">10:42  npm run dev       running   PID 81207</text>
   <rect x="644" y="630" width="540" height="50" rx="16" fill="#121D31"/>
-  <text x="668" y="662" fill="#E5ECF6" font-family="Menlo, monospace" font-size="15">10:43  open              gateway.localhost/p/crucix</text>
+  <text x="668" y="662" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">10:43  open              gateway.localhost/p/crucix</text>
 </svg>

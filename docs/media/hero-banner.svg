@@ -39,24 +39,25 @@
 
   <rect x="140" y="128" width="384" height="460" rx="28" fill="url(#heroCard)"/>
   <text x="176" y="192" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="60" font-weight="700">PortPilot</text>
-  <text x="176" y="238" fill="#8FA2BE" font-family="Inter, Arial, sans-serif" font-size="20">One desktop command center for local-first GitHub repos.</text>
+  <text x="176" y="236" fill="#8FA2BE" font-family="Inter, Arial, sans-serif" font-size="19">One desktop command center</text>
+  <text x="176" y="262" fill="#8FA2BE" font-family="Inter, Arial, sans-serif" font-size="19">for local-first GitHub repos.</text>
 
-  <rect x="176" y="278" width="140" height="44" rx="22" fill="#4CA7F1"/>
-  <text x="246" y="306" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Import</text>
-  <rect x="332" y="278" width="154" height="44" rx="22" fill="#222E45"/>
-  <text x="409" y="306" fill="#DFE7F2" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Run / Stop</text>
+  <rect x="176" y="292" width="140" height="44" rx="22" fill="#4CA7F1"/>
+  <text x="246" y="320" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Import</text>
+  <rect x="332" y="292" width="154" height="44" rx="22" fill="#222E45"/>
+  <text x="409" y="320" fill="#DFE7F2" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Run / Stop</text>
 
-  <rect x="176" y="352" width="312" height="88" rx="22" fill="#11192C"/>
-  <rect x="196" y="372" width="132" height="28" rx="14" fill="#18314A"/>
-  <text x="262" y="391" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">GitHub repo intake</text>
-  <text x="196" y="425" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">Clone, inspect scripts, parse env files,</text>
-  <text x="196" y="448" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">and build a runnable profile automatically.</text>
+  <rect x="176" y="366" width="312" height="88" rx="22" fill="#11192C"/>
+  <rect x="196" y="386" width="132" height="28" rx="14" fill="#18314A"/>
+  <text x="262" y="405" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">GitHub repo intake</text>
+  <text x="196" y="438" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="15">Clone, inspect scripts, parse env files,</text>
+  <text x="196" y="460" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="15">and build a runnable profile.</text>
 
-  <rect x="176" y="468" width="312" height="88" rx="22" fill="#11192C"/>
-  <rect x="196" y="488" width="148" height="28" rx="14" fill="#18314A"/>
-  <text x="270" y="507" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Unified local routing</text>
-  <text x="196" y="541" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">Projects get one clean `.localhost` entrypoint</text>
-  <text x="196" y="564" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="16">with logs, ports, and health in sync.</text>
+  <rect x="176" y="480" width="312" height="88" rx="22" fill="#11192C"/>
+  <rect x="196" y="500" width="148" height="28" rx="14" fill="#18314A"/>
+  <text x="270" y="519" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Unified local routing</text>
+  <text x="196" y="552" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="15">Projects get one clean `.localhost` entrypoint</text>
+  <text x="196" y="574" fill="#B7C5D9" font-family="Inter, Arial, sans-serif" font-size="15">with logs, ports, and health in sync.</text>
 
   <rect x="572" y="128" width="624" height="240" rx="28" fill="#101827"/>
   <rect x="608" y="170" width="166" height="32" rx="16" fill="#18314A"/>
@@ -74,13 +75,13 @@
   <rect x="608" y="430" width="126" height="30" rx="15" fill="#18314A"/>
   <text x="671" y="450" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Actions</text>
   <rect x="608" y="486" width="222" height="40" rx="20" fill="#222E45"/>
-  <text x="719" y="512" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">Install  Run  Build  Deploy</text>
+  <text x="719" y="511" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600" text-anchor="middle">Install  Run  Build  Deploy</text>
 
   <rect x="902" y="396" width="294" height="192" rx="28" fill="#101827"/>
   <rect x="938" y="430" width="158" height="30" rx="15" fill="#18314A"/>
   <text x="1017" y="450" fill="#70D5FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Routes + Logs</text>
   <rect x="938" y="486" width="222" height="42" rx="18" fill="#151D33"/>
-  <text x="1049" y="512" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600" text-anchor="middle">gateway.localhost/p/crucix</text>
-  <text x="938" y="554" fill="#A3B1C7" font-family="Menlo, monospace" font-size="14">[stdout] dev server ready on :3117</text>
-  <text x="938" y="579" fill="#A3B1C7" font-family="Menlo, monospace" font-size="14">[route ] mapped to crucix.localhost</text>
+  <text x="1049" y="511" fill="#E8EEF6" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600" text-anchor="middle">gateway.localhost/p/crucix</text>
+  <text x="938" y="554" fill="#A3B1C7" font-family="Menlo, monospace" font-size="13">[stdout] dev server ready on :3117</text>
+  <text x="938" y="577" fill="#A3B1C7" font-family="Menlo, monospace" font-size="13">[route ] mapped to crucix.localhost</text>
 </svg>

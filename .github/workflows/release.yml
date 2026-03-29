@@ -227,6 +227,8 @@ jobs:
             cat > release-notes.md <<EOF
           ## PortPilot ${VERSION}
 
+          ### Overview
+
           First public beta for PortPilot, a desktop control console for local-first GitHub repositories.
 
           ### Included in this beta
@@ -247,11 +249,40 @@ jobs:
           - macOS: \`PortPilot-${VERSION}-macOS.dmg\`, \`PortPilot-${VERSION}-macOS.zip\`
           - Windows: \`PortPilot-${VERSION}-Windows.msi\`, optional portable zip
           - Linux: \`PortPilot-${VERSION}-Linux-x86_64.AppImage\`, \`.deb\`, \`.rpm\`
+
+          ---
+
+          ## 简体中文
+
+          ### 概览
+
+          这是 PortPilot 的首个公开 Beta。PortPilot 是一个面向本地优先 GitHub 仓库的桌面控制台。
+
+          ### 本次 Beta 包含
+
+          - 支持从 GitHub 导入仓库，或接管本地已有项目
+          - 自动推断 install、run、build、deploy、package 动作
+          - 支持解析环境变量模板并编辑本地 env profile
+          - 提供统一的 \`.localhost\` 路由、日志、端口和运行状态视图
+
+          ### 下载说明
+
+          - macOS: 当前 Beta 安装包**尚未公证**，首次打开时可能需要在系统设置中手动允许
+          - Windows 和 Linux: 当前安装包属于功能验证版
+          - 稳定版应用内自动更新会在已签名的正式通道中完善
+
+          ### 安装包
+
+          - macOS: \`PortPilot-${VERSION}-macOS.dmg\`, \`PortPilot-${VERSION}-macOS.zip\`
+          - Windows: \`PortPilot-${VERSION}-Windows.msi\`，以及 portable zip
+          - Linux: \`PortPilot-${VERSION}-Linux-x86_64.AppImage\`, \`.deb\`, \`.rpm\`
           EOF
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             cat > release-notes.md <<EOF
           ## PortPilot ${VERSION}
+
+          ### Overview
 
           Stable cross-platform release for PortPilot.
 
@@ -260,6 +291,20 @@ jobs:
           - desktop repo control workflow for local-first GitHub projects
           - unified routing, logs, ports, and action execution
           - signed updater assets and \`latest.json\` feed for in-app updates
+
+          ---
+
+          ## 简体中文
+
+          ### 概览
+
+          PortPilot 的稳定跨平台版本。
+
+          ### 亮点
+
+          - 为本地优先 GitHub 项目提供桌面化仓库控制工作流
+          - 在一个界面里统一查看路由、日志、端口和动作执行状态
+          - 提供已签名 updater 资产和 \`latest.json\` 更新源
           EOF
           fi
 

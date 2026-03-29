@@ -51,15 +51,15 @@ PortPilot 的目标就是让这类仓库更容易被一键接管：
 
 ### 一个总览页接管多个项目
 
-![Dashboard preview](./docs/media/dashboard-preview.svg)
+![Dashboard preview](./docs/media/dashboard-preview.png)
 
 ### 项目页直接围绕动作设计
 
-![Actions preview](./docs/media/actions-preview.svg)
+![Actions preview](./docs/media/actions-preview.png)
 
 ### 路由、日志、端口放在一起看
 
-![Observability preview](./docs/media/observability-preview.svg)
+![Observability preview](./docs/media/observability-preview.png)
 
 ## 核心能力
 

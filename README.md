@@ -51,15 +51,15 @@ PortPilot is designed for repos like these:
 
 ### One dashboard, multiple repos
 
-![Dashboard preview](./docs/media/dashboard-preview.svg)
+![Dashboard preview](./docs/media/dashboard-preview.png)
 
 ### Action-centric project pages
 
-![Actions preview](./docs/media/actions-preview.svg)
+![Actions preview](./docs/media/actions-preview.png)
 
 ### Routes, logs, and ports in one place
 
-![Observability preview](./docs/media/observability-preview.svg)
+![Observability preview](./docs/media/observability-preview.png)
 
 ## Feature Map
 
