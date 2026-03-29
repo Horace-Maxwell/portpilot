@@ -221,59 +221,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-            import os
-            import textwrap
-            from pathlib import Path
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "$VERSION" == *"-beta."* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            cat > release-notes.md <<EOF
+          ## PortPilot ${VERSION}
 
-            version = os.environ["GITHUB_REF_NAME"]
-            is_beta = "-beta." in version
-            if is_beta:
-                body = textwrap.dedent(
-                    f"""\
-                    ## PortPilot {version}
+          First public beta for PortPilot, a desktop control console for local-first GitHub repositories.
 
-                    First public beta for PortPilot, a desktop control console for local-first GitHub repositories.
+          ### Included in this beta
 
-                    ### Included in this beta
+          - GitHub repo import and local project registration
+          - inferred install, run, build, deploy, and package actions
+          - env template parsing and local env profile editing
+          - unified \`.localhost\` routing, logs, ports, and runtime visibility
 
-                    - GitHub repo import and local project registration
-                    - inferred install, run, build, deploy, and package actions
-                    - env template parsing and local env profile editing
-                    - unified `.localhost` routing, logs, ports, and runtime visibility
+          ### Download notes
 
-                    ### Download notes
+          - macOS: beta installer is **not notarized yet**, so first launch may require manual approval in System Settings
+          - Windows and Linux packages are beta validation builds
+          - stable in-app auto-update will be finalized in the signed stable channel
 
-                    - macOS: beta installer is **not notarized yet**, so first launch may require manual approval in System Settings
-                    - Windows and Linux packages are beta validation builds
-                    - stable in-app auto-update will be finalized in the signed stable channel
+          ### Assets
 
-                    ### Assets
+          - macOS: \`PortPilot-${VERSION}-macOS.dmg\`, \`PortPilot-${VERSION}-macOS.zip\`
+          - Windows: \`PortPilot-${VERSION}-Windows.msi\`, optional portable zip
+          - Linux: \`PortPilot-${VERSION}-Linux-x86_64.AppImage\`, \`.deb\`, \`.rpm\`
+          EOF
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            cat > release-notes.md <<EOF
+          ## PortPilot ${VERSION}
 
-                    - macOS: `PortPilot-{version}-macOS.dmg`, `PortPilot-{version}-macOS.zip`
-                    - Windows: `PortPilot-{version}-Windows.msi`, optional portable zip
-                    - Linux: `PortPilot-{version}-Linux-x86_64.AppImage`, `.deb`, `.rpm`
-                    """
-                )
-            else:
-                body = textwrap.dedent(
-                    f"""\
-                    ## PortPilot {version}
+          Stable cross-platform release for PortPilot.
 
-                    Stable cross-platform release for PortPilot.
+          ### Highlights
 
-                    ### Highlights
-
-                    - desktop repo control workflow for local-first GitHub projects
-                    - unified routing, logs, ports, and action execution
-                    - signed updater assets and `latest.json` feed for in-app updates
-                    """
-                )
-
-            Path("release-notes.md").write_text(body, encoding="utf-8")
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fh:
-                fh.write(f"prerelease={'true' if is_beta else 'false'}\n")
-          PY
+          - desktop repo control workflow for local-first GitHub projects
+          - unified routing, logs, ports, and action execution
+          - signed updater assets and \`latest.json\` feed for in-app updates
+          EOF
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
