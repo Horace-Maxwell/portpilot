@@ -14,8 +14,8 @@
   <rect x="656" y="64" width="560" height="298" rx="26" fill="#0E1628"/>
   <rect x="656" y="398" width="560" height="298" rx="26" fill="#0E1628"/>
 
-  <text x="100" y="112" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Logs</text>
-  <text x="100" y="148" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Watch output without leaving the app</text>
+  <text x="100" y="112" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Logs</text>
+  <text x="100" y="146" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700">Watch output without leaving the app</text>
 
   <rect x="100" y="188" width="488" height="54" rx="16" fill="#121D31"/>
   <text x="126" y="221" fill="#A4F1FF" font-family="Menlo, monospace" font-size="13">[route ] crucix.localhost -&gt; 127.0.0.1:3117</text>
@@ -26,15 +26,15 @@
   <rect x="100" y="386" width="488" height="54" rx="16" fill="#121D31"/>
   <text x="126" y="419" fill="#E5ECF6" font-family="Menlo, monospace" font-size="13">[stdout] healthcheck passed /</text>
 
-  <text x="692" y="112" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Routes</text>
-  <text x="692" y="148" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Human-friendly entrypoints</text>
+  <text x="692" y="112" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Routes</text>
+  <text x="692" y="146" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700">Human-friendly entrypoints</text>
   <rect x="692" y="188" width="488" height="54" rx="16" fill="#121D31"/>
   <text x="718" y="221" fill="#E5ECF6" font-family="Menlo, monospace" font-size="13">http://crucix.localhost:42300</text>
   <rect x="692" y="254" width="488" height="54" rx="16" fill="#121D31"/>
   <text x="718" y="287" fill="#E5ECF6" font-family="Menlo, monospace" font-size="13">http://gateway.localhost:42300/p/worldmonitor/</text>
 
-  <text x="692" y="446" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Ports</text>
-  <text x="692" y="482" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">See conflicts before they become chaos</text>
+  <text x="692" y="446" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Ports</text>
+  <text x="692" y="480" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="23" font-weight="700">See conflicts before they become chaos</text>
   <rect x="692" y="522" width="488" height="54" rx="16" fill="#121D31"/>
   <text x="718" y="555" fill="#E5ECF6" font-family="Menlo, monospace" font-size="13">3117   Crucix      PID 81207      running</text>
   <rect x="692" y="588" width="488" height="54" rx="16" fill="#121D31"/>

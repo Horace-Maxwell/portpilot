@@ -10,46 +10,46 @@
   <rect x="30" y="30" width="1220" height="700" rx="28" fill="#141E34" stroke="#2A3550"/>
 
   <rect x="60" y="60" width="1160" height="78" rx="22" fill="#0E1628"/>
-  <text x="92" y="108" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Project details</text>
+  <text x="92" y="108" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="700">Project details</text>
   <rect x="300" y="84" width="96" height="30" rx="15" fill="#19324C"/>
-  <text x="348" y="104" fill="#76D6FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Actions</text>
-  <text x="424" y="105" fill="#7B8EA9" font-family="Inter, Arial, sans-serif" font-size="17">Environment</text>
-  <text x="554" y="105" fill="#7B8EA9" font-family="Inter, Arial, sans-serif" font-size="17">Runtime</text>
+  <text x="348" y="104" fill="#76D6FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Actions</text>
+  <text x="424" y="105" fill="#7B8EA9" font-family="Helvetica, Arial, sans-serif" font-size="17">Environment</text>
+  <text x="554" y="105" fill="#7B8EA9" font-family="Helvetica, Arial, sans-serif" font-size="17">Runtime</text>
 
   <rect x="60" y="166" width="520" height="534" rx="26" fill="#0E1628"/>
   <rect x="608" y="166" width="612" height="250" rx="26" fill="#0E1628"/>
   <rect x="608" y="448" width="612" height="252" rx="26" fill="#0E1628"/>
 
-  <text x="96" y="212" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Action groups</text>
-  <text x="96" y="248" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Install, run, build, deploy</text>
+  <text x="96" y="212" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Action groups</text>
+  <text x="96" y="248" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="27" font-weight="700">Install, run, build, deploy</text>
 
   <rect x="96" y="286" width="448" height="88" rx="22" fill="#121D31"/>
-  <text x="122" y="324" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700">npm install</text>
+  <text x="122" y="324" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700">npm install</text>
   <text x="122" y="352" fill="#9EB0C9" font-family="Menlo, monospace" font-size="15">kind: install   source: inferred</text>
   <rect x="454" y="306" width="68" height="30" rx="15" fill="#203049"/>
-  <text x="488" y="326" fill="#DCE8F6" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Queue</text>
+  <text x="488" y="326" fill="#DCE8F6" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Queue</text>
 
   <rect x="96" y="392" width="448" height="88" rx="22" fill="#121D31"/>
-  <text x="122" y="430" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700">npm run dev</text>
-  <text x="122" y="458" fill="#9EB0C9" font-family="Menlo, monospace" font-size="15">kind: run   route: /p/crucix   port hint: 3117</text>
+  <text x="122" y="430" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700">npm run dev</text>
+  <text x="122" y="458" fill="#9EB0C9" font-family="Menlo, monospace" font-size="14">kind: run   route: /p/crucix   port hint: 3117</text>
   <rect x="442" y="412" width="80" height="30" rx="15" fill="#163E2B"/>
-  <text x="482" y="432" fill="#D8F8E3" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Running</text>
+  <text x="482" y="432" fill="#D8F8E3" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Running</text>
 
   <rect x="96" y="498" width="448" height="88" rx="22" fill="#121D31"/>
-  <text x="122" y="536" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700">docker compose up -d</text>
+  <text x="122" y="536" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700">docker compose up -d</text>
   <text x="122" y="564" fill="#9EB0C9" font-family="Menlo, monospace" font-size="15">kind: deploy   source: inferred</text>
   <rect x="438" y="518" width="84" height="30" rx="15" fill="#223149"/>
-  <text x="480" y="538" fill="#DCE8F6" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Preview</text>
+  <text x="480" y="538" fill="#DCE8F6" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Preview</text>
 
-  <text x="644" y="212" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Environment</text>
-  <text x="644" y="248" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Template-driven env editing</text>
+  <text x="644" y="212" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Environment</text>
+  <text x="644" y="246" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700">Template-based env editing</text>
   <rect x="644" y="286" width="540" height="50" rx="16" fill="#121D31"/>
   <text x="668" y="318" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">OPENAI_API_KEY = **************</text>
   <rect x="644" y="348" width="540" height="50" rx="16" fill="#121D31"/>
   <text x="668" y="380" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">NEXT_PUBLIC_BASE_URL = http://localhost:3117</text>
 
-  <text x="644" y="494" fill="#56C8FF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Runtime</text>
-  <text x="644" y="530" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700">Live execution history</text>
+  <text x="644" y="494" fill="#56C8FF" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700">Runtime</text>
+  <text x="644" y="528" fill="#F8FAFC" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700">Live execution history</text>
   <rect x="644" y="568" width="540" height="50" rx="16" fill="#121D31"/>
   <text x="668" y="600" fill="#E5ECF6" font-family="Menlo, monospace" font-size="14">10:42  npm run dev       running   PID 81207</text>
   <rect x="644" y="630" width="540" height="50" rx="16" fill="#121D31"/>
