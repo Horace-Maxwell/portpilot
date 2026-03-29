@@ -1,0 +1,47 @@
+[package]
+name = "portpilot"
+version = "0.1.0"
+description = "PortPilot desktop repo control console"
+authors = ["Horace Dong"]
+license = "MIT"
+repository = "https://github.com/Horace-Maxwell/portpilot"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "portpilot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+axum = "0.8"
+tower = "0.5"
+url = "2.5"
+walkdir = "2.5"
+uuid = { version = "1.8", features = ["v4", "serde"] }
+portpicker = "0.1"
+regex = "1.11"
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+futures-util = "0.3"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = "symbols"

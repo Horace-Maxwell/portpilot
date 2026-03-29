@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PortPilot",
+  "version": "0.1.0",
+  "identifier": "com.horacedong.portpilot",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PortPilot",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1100,
+        "minHeight": 760,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https: http:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {}
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJEMUE4MUYwMzVEMDNBODYKUldTR090QTE4SUVhTFF3UmdicDAxUHBUeldtM1ErUVp0bzJBeU96WUFUc2hha21EbFFvZHhzdUgK",
+      "endpoints": [
+        "https://github.com/Horace-Maxwell/portpilot/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

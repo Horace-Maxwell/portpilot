@@ -1,0 +1,30 @@
+{
+  "name": "portpilot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "release:dry-run": "tauri build --debug --target universal-apple-darwin",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "preact": "^10.25.1"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.3",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "@tauri-apps/cli": "^2"
+  }
+}

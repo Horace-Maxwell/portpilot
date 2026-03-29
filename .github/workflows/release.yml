@@ -1,0 +1,287 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: universal-apple-darwin
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libssl-dev \
+            rpm \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY secret" >&2
+            exit 1
+          fi
+          echo "TAURI_SIGNING_PRIVATE_KEY=${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "${{ secrets.APPLE_CERTIFICATE }}" | (base64 --decode 2>/dev/null || base64 -D) > "$CERT_PATH"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep "Developer ID Application" | grep -oE '"[^"]+"' | head -1 | tr -d '"')
+          if [ -z "$IDENTITY" ]; then
+            echo "No Developer ID Application identity found" >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build Tauri app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Build Tauri app (Windows)
+        if: runner.os == 'Windows'
+        run: npm run tauri build
+
+      - name: Build Tauri app (Linux)
+        if: runner.os == 'Linux'
+        run: npm run tauri build -- --bundles appimage,deb,rpm
+
+      - name: Prepare macOS release assets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          MAC_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          TAR_GZ=$(find "$MAC_DIR" -maxdepth 1 -name "*.tar.gz" -type f | head -1)
+          APP_PATH=$(find "$MAC_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
+          DMG_PATH=$(find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -type f | head -1)
+          cp "$TAR_GZ" "release-assets/PortPilot-${VERSION}-macOS.tar.gz"
+          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/PortPilot-${VERSION}-macOS.tar.gz.sig"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/PortPilot-${VERSION}-macOS.zip"
+          cp "$DMG_PATH" "release-assets/PortPilot-${VERSION}-macOS.dmg"
+
+      - name: Prepare Windows release assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $VERSION = $env:GITHUB_REF_NAME
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi | Select-Object -First 1
+          if ($null -ne $msi) {
+            Copy-Item $msi.FullName "release-assets/PortPilot-$VERSION-Windows.msi"
+            if (Test-Path "$($msi.FullName).sig") {
+              Copy-Item "$($msi.FullName).sig" "release-assets/PortPilot-$VERSION-Windows.msi.sig"
+            }
+          }
+          $exe = Get-ChildItem -Path 'src-tauri/target/release' -Filter '*.exe' | Select-Object -First 1
+          if ($null -ne $exe) {
+            $portableDir = 'release-assets/PortPilot-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exe.FullName $portableDir
+            Compress-Archive -Path "$portableDir/*" -DestinationPath "release-assets/PortPilot-$VERSION-Windows-Portable.zip" -Force
+            Remove-Item -Recurse -Force $portableDir
+          }
+
+      - name: Prepare Linux release assets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
+          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
+          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
+          if [ -n "$APPIMAGE" ]; then
+            cp "$APPIMAGE" "release-assets/PortPilot-${VERSION}-Linux-x86_64.AppImage"
+            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/PortPilot-${VERSION}-Linux-x86_64.AppImage.sig"
+          fi
+          if [ -n "$DEB" ]; then
+            cp "$DEB" "release-assets/PortPilot-${VERSION}-Linux-x86_64.deb"
+          fi
+          if [ -n "$RPM" ]; then
+            cp "$RPM" "release-assets/PortPilot-${VERSION}-Linux-x86_64.rpm"
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ runner.os }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    runs-on: ubuntu-22.04
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download built assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PortPilot ${{ github.ref_name }}
+          prerelease: true
+          body: |
+            ## PortPilot ${{ github.ref_name }}
+
+            Cross-platform repo control console for local-first GitHub projects.
+
+            ### Downloads
+
+            - macOS: `PortPilot-${{ github.ref_name }}-macOS.dmg` or `.zip`
+            - Windows: `PortPilot-${{ github.ref_name }}-Windows.msi`
+            - Linux: `PortPilot-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+
+            `.tar.gz`, `.msi.sig`, and `.AppImage.sig` are updater assets for the in-app update flow.
+          files: release-assets/*
+
+  assemble-latest-json:
+    name: Assemble latest.json
+    runs-on: ubuntu-22.04
+    needs: publish-release
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          mkdir -p dl
+          gh release download "${GITHUB_REF_NAME}" --dir dl --repo "$GITHUB_REPOSITORY"
+
+      - name: Generate latest.json
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BASE_URL="https://github.com/$REPO/releases/download/$TAG"
+          MAC_URL=""; MAC_SIG=""
+          WIN_URL=""; WIN_SIG=""
+          LINUX_URL=""; LINUX_SIG=""
+          shopt -s nullglob
+          for SIG in dl/*.sig; do
+            BASE=${SIG%.sig}
+            FILE=$(basename "$BASE")
+            URL="$BASE_URL/$FILE"
+            SIG_CONTENT=$(cat "$SIG")
+            case "$FILE" in
+              *-macOS.tar.gz)
+                MAC_URL="$URL"; MAC_SIG="$SIG_CONTENT" ;;
+              *-Windows.msi)
+                WIN_URL="$URL"; WIN_SIG="$SIG_CONTENT" ;;
+              *-Linux-x86_64.AppImage)
+                LINUX_URL="$URL"; LINUX_SIG="$SIG_CONTENT" ;;
+            esac
+          done
+          cat > latest.json <<JSON
+          {
+            "version": "$VERSION",
+            "notes": "Release $TAG",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "darwin-aarch64": { "signature": "$MAC_SIG", "url": "$MAC_URL" },
+              "darwin-x86_64": { "signature": "$MAC_SIG", "url": "$MAC_URL" },
+              "windows-x86_64": { "signature": "$WIN_SIG", "url": "$WIN_URL" },
+              "linux-x86_64": { "signature": "$LINUX_SIG", "url": "$LINUX_URL" }
+            }
+          }
+          JSON
+
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" latest.json --clobber --repo "$GITHUB_REPOSITORY"
