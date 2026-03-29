@@ -105,10 +105,12 @@ PortPilot is available now as a public GitHub beta release.
 
 ## Roadmap
 
-- Better repo inference for more monorepo layouts
-- Stronger Docker and Compose orchestration
-- Signed + notarized stable macOS release flow
-- Polished release updater experience for all supported platforms
+- P0: guided first-run flow, Doctor checks, stronger monorepo detection, and one-click recovery actions
+- P1: session restore, batch actions, better runtime states, richer logs, and stronger route health
+- P1: deeper Docker / Compose orchestration with one unified runtime surface
+- P2: shareable project recipes, preview tunnels, and extensible stack-specific inference
+
+See the full prioritized roadmap in [docs/product-roadmap.md](./docs/product-roadmap.md).
 
 ## Development
 

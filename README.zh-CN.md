@@ -105,10 +105,12 @@ PortPilot 现在已经以 GitHub 公开 Beta 的形式提供下载。
 
 ## Roadmap
 
-- 更强的 monorepo 与多入口项目识别
-- 更完整的 Docker / Compose 编排体验
-- 完整的 macOS 签名与公证发布链
-- 更顺滑的多平台自动更新体验
+- P0：首次运行向导、Doctor 检查、更强的 monorepo 识别和一键修复动作
+- P1：session 恢复、批量动作、更清晰的运行时状态、更强的日志与健康检查
+- P1：更完整的 Docker / Compose 编排，并统一进同一个 Runtime 面板
+- P2：项目 recipe、预览分享 tunnel、以及更可扩展的技术栈推断能力
+
+完整优先级路线图见 [docs/product-roadmap.zh-CN.md](./docs/product-roadmap.zh-CN.md)。
 
 ## 开发校验
 

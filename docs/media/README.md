@@ -5,7 +5,10 @@ These assets are used directly on the GitHub repository homepage.
 ## Export Rules
 
 - `hero-banner.svg` stays SVG and is only used for the top hero image.
-- The hero must use a strict two-column grid: fixed left info card, wide right top card, and two bottom cards aligned to the same column system.
+- The hero is a release-page visual, not a UI collage.
+- The hero must have one dominant product window on the right and one brand/CTA column on the left.
+- The hero must not use equal-weight floating cards or placeholder-looking blocks.
+- Keep hero copy to one headline, up to two subtitle lines, and at most two CTAs.
 - `dashboard-preview.png`, `actions-preview.png`, and `observability-preview.png` must be exported as wide PNGs.
 - Never export the detail previews as square thumbnails.
 - Preferred output size for detail previews: `1280x760`.
@@ -20,7 +23,7 @@ These assets are used directly on the GitHub repository homepage.
 - Check that the right-side rail is fully visible.
 - Check that no heading or card text is clipped.
 - Check that the artwork still reads well at GitHub README width.
-- Check that the hero cards share consistent left and right edges, vertical rhythm, and equal gutter spacing.
+- Check that the hero has a single focal point and still reads like a product launch visual at README width.
 
 ## Export Notes
 
