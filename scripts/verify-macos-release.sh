@@ -18,7 +18,7 @@ if [[ ! -f "$DMG_PATH" ]]; then
 fi
 
 echo "Verifying DMG gatekeeper status: $DMG_PATH"
-DMG_CHECK="$(spctl -a -vv "$DMG_PATH" 2>&1 || true)"
+DMG_CHECK="$(spctl --assess --type open --context context:primary-signature -vv "$DMG_PATH" 2>&1 || true)"
 echo "$DMG_CHECK"
 if [[ "$DMG_CHECK" != *"accepted"* ]]; then
   echo "DMG failed Gatekeeper verification." >&2

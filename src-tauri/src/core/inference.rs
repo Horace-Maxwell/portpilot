@@ -48,6 +48,69 @@ impl PackageManager {
     }
 }
 
+fn prettify_script_label(script: &str) -> String {
+    script
+        .split(':')
+        .map(|part| {
+            let mut chars = part.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            let mut label = String::new();
+            label.extend(first.to_uppercase());
+            label.push_str(chars.as_str());
+            label
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+fn is_preferred_node_run_script(script: &str, command: &str) -> bool {
+    matches!(script, "dev" | "start" | "preview" | "desktop:dev")
+        || script.ends_with(":dev")
+        || script.ends_with(":start")
+        || script.ends_with(":preview")
+        || script.starts_with("ui:")
+        || script.starts_with("web:")
+        || script.contains("gateway")
+        || command.contains("vite")
+        || command.contains("server.js")
+        || command.contains("serve")
+        || command.contains("run-node.mjs")
+}
+
+fn collect_preferred_node_run_scripts(scripts: &BTreeMap<String, String>) -> Vec<String> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+
+    for script in ["dev", "start", "preview", "desktop:dev"] {
+        if scripts.contains_key(script) {
+            selected.push(script.to_string());
+            seen.insert(script.to_string());
+        }
+    }
+
+    for (script, command) in scripts {
+        if seen.contains(script) || !is_preferred_node_run_script(script, command) {
+            continue;
+        }
+        selected.push(script.clone());
+        seen.insert(script.clone());
+    }
+
+    selected
+}
+
+fn label_for_node_run_script(script: &str) -> String {
+    match script {
+        "dev" => "Web Dev".to_string(),
+        "start" => "Start".to_string(),
+        "preview" => "Preview".to_string(),
+        "desktop:dev" => "Desktop Dev".to_string(),
+        _ => format!("Run {}", prettify_script_label(script)),
+    }
+}
+
 pub fn slugify(value: &str) -> String {
     let mut output = String::new();
     let mut last_dash = false;
@@ -294,6 +357,9 @@ pub fn infer_project_from_path(
     let slug = slugify(&name);
     let inferred_port = infer_port_hint(root, compose_file.as_deref());
     let mut env_template = parse_env_template(root);
+    if let Some(compose) = compose_file.as_deref() {
+        merge_discovered_env_fields(&mut env_template, parse_compose_env_template(compose));
+    }
     let mut workspace_targets = detect_workspace_targets(root);
     let inferred_readme_hints = infer_readme_hints(root);
     let preferred_port = recipe
@@ -357,22 +423,82 @@ fn read_project_recipe(root: &Path) -> Option<ProjectRecipe> {
 }
 
 fn merge_recipe_env_keys(fields: &mut Vec<EnvTemplateField>, recipe: &ProjectRecipe) {
+    let recipe_fields = recipe
+        .env_keys
+        .iter()
+        .filter_map(|key| {
+            let trimmed = key.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(EnvTemplateField {
+                key: trimmed.to_string(),
+                default_value: None,
+                description: Some("Suggested by .portpilot.json".to_string()),
+                field_type: EnvFieldType::Text,
+            })
+        })
+        .collect::<Vec<_>>();
+    merge_discovered_env_fields(fields, recipe_fields);
+}
+
+fn merge_discovered_env_fields(fields: &mut Vec<EnvTemplateField>, extra: Vec<EnvTemplateField>) {
     let mut seen = fields
         .iter()
         .map(|field| field.key.clone())
         .collect::<HashSet<_>>();
-    for key in &recipe.env_keys {
-        let trimmed = key.trim();
-        if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+    for field in extra {
+        if !seen.insert(field.key.clone()) {
             continue;
         }
+        fields.push(field);
+    }
+}
+
+fn parse_compose_env_template(compose_file: &Path) -> Vec<EnvTemplateField> {
+    let Ok(contents) = fs::read_to_string(compose_file) else {
+        return Vec::new();
+    };
+
+    let pattern = Regex::new(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}").expect("regex");
+    let mut fields = Vec::new();
+    let mut seen = HashSet::new();
+
+    for capture in pattern.captures_iter(&contents) {
+        let Some(key) = capture.get(1).map(|value| value.as_str().trim()) else {
+            continue;
+        };
+        if key.is_empty() || !seen.insert(key.to_string()) {
+            continue;
+        }
+
+        let default_value = capture
+            .get(2)
+            .map(|value| value.as_str().trim().trim_matches('"').to_string())
+            .filter(|value| !value.is_empty());
+        let upper = key.to_ascii_uppercase();
+        let field_type = if upper.contains("TOKEN")
+            || upper.contains("SECRET")
+            || upper.contains("PASSWORD")
+            || upper.contains("KEY")
+            || upper.contains("COOKIE")
+        {
+            EnvFieldType::Secret
+        } else if matches!(default_value.as_deref(), Some("true" | "false" | "1" | "0")) {
+            EnvFieldType::Boolean
+        } else {
+            EnvFieldType::Text
+        };
+
         fields.push(EnvTemplateField {
-            key: trimmed.to_string(),
-            default_value: None,
-            description: Some("Suggested by .portpilot.json".to_string()),
-            field_type: EnvFieldType::Text,
+            key: key.to_string(),
+            default_value,
+            description: Some("Detected from docker-compose configuration".to_string()),
+            field_type,
         });
     }
+
+    fields
 }
 
 fn apply_recipe_targets(targets: &mut Vec<DetectedAppTarget>, recipe: &ProjectRecipe) {
@@ -491,20 +617,16 @@ pub fn infer_actions(
         ));
 
         if let Some(scripts) = read_package_scripts(root) {
-            let preferred_runs = [("dev", "Web Dev"), ("start", "Start"), ("preview", "Preview"), ("desktop:dev", "Desktop Dev")];
-            let mut seen_run = HashSet::new();
-            for (script, label) in preferred_runs {
-                if scripts.contains_key(script) && seen_run.insert(script) {
-                    actions.push(action(
+            for script in collect_preferred_node_run_scripts(&scripts) {
+                actions.push(action(
                         &format!("run-{script}"),
-                        label,
+                        &label_for_node_run_script(&script),
                         ActionKind::Run,
-                        &package_manager.run_script_command(script),
+                        &package_manager.run_script_command(&script),
                         &workdir,
                         port_hint,
                         ActionSource::Inferred,
                     ));
-                }
             }
 
             if root.join("server.mjs").exists() {
@@ -541,6 +663,7 @@ pub fn infer_actions(
             }
         }
 
+        actions.extend(infer_auxiliary_root_actions(root, runtime_kind, port_hint));
         for target in workspace_targets {
             actions.extend(infer_target_actions(target));
         }
@@ -612,6 +735,8 @@ pub fn infer_actions(
         ));
     }
 
+    actions.extend(infer_make_actions(root, runtime_kind, port_hint));
+
     actions.push(action(
         "open-route",
         "Open Route",
@@ -621,6 +746,103 @@ pub fn infer_actions(
         port_hint,
         ActionSource::Inferred,
     ));
+
+    actions
+}
+
+fn infer_auxiliary_root_actions(
+    root: &Path,
+    primary_runtime_kind: &RuntimeKind,
+    port_hint: Option<u16>,
+) -> Vec<ProjectAction> {
+    let mut actions = Vec::new();
+    let workdir = root.to_string_lossy().to_string();
+
+    if !matches!(primary_runtime_kind, RuntimeKind::Python) && has_runtime_pyproject(root) {
+        actions.push(action(
+            "install-python-backend",
+            "Install Backend",
+            ActionKind::Install,
+            "uv sync || pip install -e .",
+            &workdir,
+            None,
+            ActionSource::Inferred,
+        ));
+
+        let mut seen_commands = HashSet::new();
+        let scripts = read_pyproject_scripts(root);
+        for command in infer_python_run_commands(root, &scripts) {
+            if !seen_commands.insert(command.clone()) {
+                continue;
+            }
+            let label = if command.contains("serve") {
+                "Serve Backend".to_string()
+            } else {
+                "Run Backend".to_string()
+            };
+            actions.push(action(
+                &format!("run-python-backend-{}", slugify(&command)),
+                &label,
+                ActionKind::Run,
+                &command,
+                &workdir,
+                port_hint,
+                ActionSource::Inferred,
+            ));
+        }
+    }
+
+    actions
+}
+
+fn infer_make_actions(root: &Path, runtime_kind: &RuntimeKind, port_hint: Option<u16>) -> Vec<ProjectAction> {
+    if matches!(runtime_kind, RuntimeKind::Go) {
+        return Vec::new();
+    }
+
+    let make_targets = read_make_targets(root);
+    if make_targets.is_empty() {
+        return Vec::new();
+    }
+
+    let workdir = root.to_string_lossy().to_string();
+    let mut actions = Vec::new();
+
+    if make_targets.contains("install") {
+        actions.push(action(
+            "make-install",
+            "Make Install",
+            ActionKind::Install,
+            "make install",
+            &workdir,
+            None,
+            ActionSource::Inferred,
+        ));
+    }
+    for (target, label, kind) in [
+        ("startAndBuild", "Compose Start + Build", ActionKind::Run),
+        ("start", "Make Start", ActionKind::Run),
+        ("run", "Make Run", ActionKind::Run),
+        ("stop", "Make Stop", ActionKind::Stop),
+        ("remove", "Make Remove", ActionKind::Stop),
+    ] {
+        if make_targets.contains(target) {
+            let is_run = matches!(kind, ActionKind::Run);
+            actions.push(action(
+                &format!("make-{}", slugify(target)),
+                label,
+                kind,
+                &format!("make {target}"),
+                &workdir,
+                if is_run {
+                    port_hint
+                } else {
+                    None
+                },
+                ActionSource::Inferred,
+            ));
+        }
+    }
 
     actions
 }
@@ -685,6 +907,7 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
         Regex::new(r"`(docker compose [^`]+)`").expect("regex"),
         Regex::new(r"`(python -m [^`]+)`").expect("regex"),
         Regex::new(r"`(uv (?:sync|run [^`]+))`").expect("regex"),
+        Regex::new(r"`([a-z0-9][\w-]*\s+(?:serve|start|dev|gateway)(?:\s+[^`]+)?)`").expect("regex"),
     ];
 
     let mut hints = Vec::new();
@@ -700,8 +923,62 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
         }
     }
 
+    for line in contents.lines() {
+        let normalized = line
+            .trim()
+            .trim_matches('`')
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim_start_matches("> ")
+            .trim();
+        if !looks_like_readme_command_hint(normalized) {
+            continue;
+        }
+        let command = normalized.to_string();
+        if seen.insert(command.clone()) {
+            hints.push((score_readme_hint(&command, &contents), command));
+        }
+    }
+
     hints.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
     hints.into_iter().map(|(_, command)| command).take(4).collect()
+}
+
+fn looks_like_readme_command_hint(line: &str) -> bool {
+    if line.is_empty() || line.len() > 140 {
+        return false;
+    }
+
+    let starts_with_tool = [
+        "npm ",
+        "pnpm ",
+        "yarn ",
+        "bun ",
+        "make ",
+        "docker compose ",
+        "docker-compose ",
+        "python -m ",
+        "uv ",
+        "node ",
+        "open-webui ",
+        "openclaw ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix));
+
+    let contains_runtime = [
+        " install",
+        " dev",
+        " start",
+        " preview",
+        " serve",
+        " gateway",
+        " run",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle));
+
+    starts_with_tool && contains_runtime
 }
 
 fn action(
@@ -1013,6 +1290,12 @@ fn score_readme_hint(command: &str, readme_contents: &str) -> i32 {
     if command_lower.contains("docker compose up") {
         score += 4;
     }
+    if command_lower.contains("serve") {
+        score += 4;
+    }
+    if command_lower.contains("gateway") {
+        score += 5;
+    }
     if readme_contents.to_ascii_lowercase().contains("quick start") {
         score += 1;
     }
@@ -1062,15 +1345,17 @@ fn score_target(root: &Path, target: &DetectedAppTarget) -> i32 {
 
 fn target_available_actions(target_path: &Path, runtime_kind: &RuntimeKind) -> Vec<String> {
     match runtime_kind {
-        RuntimeKind::Node => read_package_scripts(target_path)
-            .unwrap_or_default()
-            .keys()
-            .filter(|script| {
-                matches!(script.as_str(), "dev" | "start" | "preview")
-                    || is_build_script(script)
-            })
-            .cloned()
-            .collect(),
+        RuntimeKind::Node => {
+            let scripts = read_package_scripts(target_path).unwrap_or_default();
+            let mut actions = collect_preferred_node_run_scripts(&scripts);
+            actions.extend(
+                scripts
+                    .keys()
+                    .filter(|script| is_build_script(script))
+                    .cloned(),
+            );
+            actions
+        }
         RuntimeKind::Python => vec!["run".to_string(), "install".to_string()],
         RuntimeKind::Rust => vec!["run".to_string(), "build".to_string()],
         RuntimeKind::Go => {
@@ -1106,18 +1391,16 @@ fn infer_target_actions(target: &DetectedAppTarget) -> Vec<ProjectAction> {
             let package_manager = detect_package_manager(target_root);
             let mut actions = Vec::new();
 
-            for (script, label) in [("dev", "Run"), ("start", "Start"), ("preview", "Preview"), ("desktop:dev", "Desktop Dev")] {
-                if target_scripts.contains_key(script) {
-                    actions.push(action(
-                        &format!("workspace-{}-{script}", target.id),
-                        &format!("{label} {}", target.name),
-                        ActionKind::Run,
-                        &package_manager.run_script_command(script),
-                        &target.root_path,
-                        target.suggested_port,
-                        ActionSource::Inferred,
-                    ));
-                }
+            for script in collect_preferred_node_run_scripts(&target_scripts) {
+                actions.push(action(
+                    &format!("workspace-{}-{script}", target.id),
+                    &format!("{} {}", label_for_node_run_script(&script), target.name),
+                    ActionKind::Run,
+                    &package_manager.run_script_command(&script),
+                    &target.root_path,
+                    target.suggested_port,
+                    ActionSource::Inferred,
+                ));
             }
 
             for script in target_scripts.keys() {
@@ -1264,6 +1547,7 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
         Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
         Regex::new(r"localhost:(\d{2,5})").expect("regex"),
         Regex::new(r"PORT(?:=|\s+)(\d{2,5})").expect("regex"),
+        Regex::new(r"port\s*:\s*(\d{2,5})").expect("regex"),
         Regex::new(r#""(\d{2,5}):\d{2,5}""#).expect("regex"),
         Regex::new(r#"(\d{2,5}):\d{2,5}"#).expect("regex"),
     ];
@@ -1271,6 +1555,10 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
     let mut files_to_scan = vec![
         root.join("package.json"),
         root.join("server.mjs"),
+        root.join("server.js"),
+        root.join("src/command-line.js"),
+        root.join("backend/start.sh"),
+        root.join("Makefile"),
         root.join("README.md"),
         root.join(".env.example"),
         root.join(".env.local.example"),
@@ -1302,6 +1590,71 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
     }
 
     None
+}
+
+fn has_runtime_pyproject(root: &Path) -> bool {
+    let path = root.join("pyproject.toml");
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    contents.contains("[project]")
+}
+
+fn read_pyproject_scripts(root: &Path) -> Vec<String> {
+    let path = root.join("pyproject.toml");
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    let mut in_scripts = false;
+    let mut scripts = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_scripts = trimmed == "[project.scripts]";
+            continue;
+        }
+        if !in_scripts || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_matches('"').trim_matches('\'');
+        if !key.is_empty() {
+            scripts.push(key.to_string());
+        }
+    }
+
+    scripts
+}
+
+fn infer_python_run_commands(root: &Path, scripts: &[String]) -> Vec<String> {
+    let mut commands = Vec::new();
+    let mut seen = HashSet::new();
+
+    for hint in infer_readme_hints(root) {
+        let normalized = hint.trim().to_string();
+        let relevant = normalized.starts_with("uv run ")
+            || normalized.starts_with("python -m ")
+            || normalized.contains(" serve");
+        if relevant && seen.insert(normalized.clone()) {
+            commands.push(normalized);
+        }
+    }
+
+    for script in scripts {
+        let command = format!("uv run {script}");
+        if seen.insert(command.clone()) {
+            commands.push(command);
+        }
+    }
+
+    if commands.is_empty() {
+        commands.push("uv run . || python -m .".to_string());
+    }
+
+    commands
 }
 
 fn is_build_script(script: &str) -> bool {
@@ -1622,6 +1975,54 @@ build:
     }
 
     #[test]
+    fn adds_python_backend_actions_for_hybrid_root_repository() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("backend")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "open-webui-like",
+              "scripts": {
+                "dev": "vite dev --host",
+                "preview": "vite preview"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            r#"[project]
+name = "open-webui"
+
+[project.scripts]
+open-webui = "open_webui:app"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("README.md"),
+            r#"
+```bash
+open-webui serve
+```
+"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert!(project
+            .actions
+            .iter()
+            .any(|action| action.command == "open-webui serve"));
+        assert!(project
+            .actions
+            .iter()
+            .any(|action| action.command == "uv run open-webui"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn smokes_real_public_repositories_when_local_clones_are_present() {
         let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
             .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
@@ -1638,6 +2039,9 @@ build:
             "example-voting-app",
             "full-stack-fastapi-template",
             "pagoda",
+            "SillyTavern",
+            "open-webui",
+            "openclaw",
         ];
 
         for repo in repos {
@@ -1666,6 +2070,57 @@ build:
                     project.has_docker_compose,
                     "expected compose detection for example-voting-app"
                 ),
+                "SillyTavern" => {
+                    assert_eq!(project.preferred_port, Some(8000));
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command.contains("start")),
+                        "expected runnable start command for SillyTavern"
+                    );
+                }
+                "open-webui" => {
+                    assert!(project.has_docker_compose, "expected compose detection for open-webui");
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command == "open-webui serve"
+                                || action.command == "make start"
+                                || action.command == "make startAndBuild"),
+                        "expected backend or compose entrypoint for open-webui"
+                    );
+                    assert!(
+                        project
+                            .readme_hints
+                            .iter()
+                            .any(|hint| hint.contains("open-webui serve")),
+                        "expected serve hint for open-webui"
+                    );
+                }
+                "openclaw" => {
+                    assert!(project.has_docker_compose, "expected compose detection for openclaw");
+                    assert_eq!(project.preferred_port, Some(18789));
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command == "pnpm run gateway:dev"),
+                        "expected gateway dev action for openclaw"
+                    );
+                    assert!(
+                        project
+                            .env_template
+                            .iter()
+                            .any(|field| field.key == "OPENCLAW_CONFIG_DIR")
+                            && project
+                                .env_template
+                                .iter()
+                                .any(|field| field.key == "OPENCLAW_WORKSPACE_DIR"),
+                        "expected compose env requirements for openclaw"
+                    );
+                }
                 "pagoda" => assert!(
                     project
                         .actions
