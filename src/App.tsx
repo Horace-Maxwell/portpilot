@@ -402,6 +402,30 @@ export default function App() {
     });
   }
 
+  async function handleCopyRecipe() {
+    if (!selectedProject) {
+      return;
+    }
+    await runBusy(`recipe-copy-${selectedProject.id}`, async () => {
+      const recipe = await api.getProjectRecipe(selectedProject.id);
+      const contents = JSON.stringify(recipe, null, 2);
+      await navigator.clipboard.writeText(contents);
+      setStatusMessage(`Copied .portpilot.json recipe for ${selectedProject.name}.`);
+    });
+  }
+
+  async function handleWriteRecipe() {
+    if (!selectedProject) {
+      return;
+    }
+    await runBusy(`recipe-write-${selectedProject.id}`, async () => {
+      const updated = await api.writeProjectRecipe(selectedProject.id);
+      setStatusMessage(`Wrote .portpilot.json for ${updated.name}.`);
+      await refreshAll();
+      setSelectedProjectId(updated.id);
+    });
+  }
+
   async function handleDeleteSession(sessionId: string) {
     await runBusy(`delete-session-${sessionId}`, async () => {
       const nextSessions = await api.deleteWorkspaceSession(sessionId);
@@ -831,6 +855,12 @@ export default function App() {
                       <button className="secondary-button" onClick={() => void openUrl(selectedProject.route_path_url)} type="button">
                         Open Route
                       </button>
+                      <button className="ghost-button" onClick={() => void handleCopyRecipe()} type="button">
+                        Copy Recipe JSON
+                      </button>
+                      <button className="secondary-button" onClick={() => void handleWriteRecipe()} type="button">
+                        Write .portpilot.json
+                      </button>
                       {firstAction(selectedProject, "run") && (
                         <button
                           className="primary-button"
@@ -864,6 +894,14 @@ export default function App() {
                       <Definition label="Subdomain" value={selectedProject.route_subdomain_url} />
                       <Definition label="Path Route" value={selectedProject.route_path_url} />
                       <Definition label="Detected" value={selectedProject.detected_files.join(", ")} />
+                      <Definition
+                        label="Recipe"
+                        value={
+                          selectedProject.detected_files.includes(".portpilot.json")
+                            ? ".portpilot.json detected"
+                            : "Write a recipe to lock in this repo's best defaults"
+                        }
+                      />
                       <Definition
                         label="App Targets"
                         value={

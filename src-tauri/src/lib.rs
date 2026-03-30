@@ -30,7 +30,7 @@ use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
     DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, ImportedRepo,
     HealthProbeResult, LogEntry, ManagedProject, PortLease, ProjectAction, RouteBinding,
-    RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
+    ProjectRecipe, ProjectRecipeTarget, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
     WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
@@ -124,6 +124,33 @@ fn get_doctor_report(
 ) -> Result<DoctorReport, String> {
     let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     Ok(build_doctor_report(&project))
+}
+
+#[tauri::command]
+fn get_project_recipe(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ProjectRecipe, String> {
+    let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
+    Ok(build_project_recipe(&project))
+}
+
+#[tauri::command]
+fn write_project_recipe(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ManagedProject, String> {
+    let gateway_port = *state.gateway_port.lock();
+    let project = state
+        .store
+        .get(&project_id)?
+        .ok_or_else(|| "Project not found.".to_string())?;
+    let latest = fresh_project(&state.store, &project_id, gateway_port)?;
+    let recipe = build_project_recipe(&latest);
+    let path = Path::new(&latest.root_path).join(".portpilot.json");
+    let contents = serde_json::to_string_pretty(&recipe).map_err(|error| error.to_string())?;
+    fs::write(path, contents).map_err(|error| error.to_string())?;
+    refresh_project_metadata(&state.store, project, gateway_port)
 }
 
 #[tauri::command]
@@ -811,6 +838,47 @@ fn refresh_project_metadata(
     Ok(merged)
 }
 
+fn build_project_recipe(project: &ManagedProject) -> ProjectRecipe {
+    ProjectRecipe {
+        version: 1,
+        project_name: Some(project.name.clone()),
+        primary_target_id: project.primary_target_id.clone(),
+        preferred_port: project.preferred_port,
+        install_action_id: project
+            .actions
+            .iter()
+            .find(|action| matches!(action.kind, ActionKind::Install))
+            .map(|action| action.id.clone()),
+        run_action_id: project
+            .actions
+            .iter()
+            .find(|action| matches!(action.kind, ActionKind::Run))
+            .map(|action| action.id.clone()),
+        open_action_id: project
+            .actions
+            .iter()
+            .find(|action| matches!(action.kind, ActionKind::Open))
+            .map(|action| action.id.clone()),
+        readme_hints: project.readme_hints.clone(),
+        env_keys: project
+            .env_template
+            .iter()
+            .map(|field| field.key.clone())
+            .collect(),
+        targets: project
+            .workspace_targets
+            .iter()
+            .map(|target| ProjectRecipeTarget {
+                id: target.id.clone(),
+                relative_path: target.relative_path.clone(),
+                runtime_kind: Some(target.runtime_kind.clone()),
+                priority: Some(target.priority),
+                suggested_port: target.suggested_port,
+            })
+            .collect(),
+    }
+}
+
 fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
     let install_action_id = project
         .actions
@@ -1378,6 +1446,8 @@ pub fn run() {
             list_project_actions,
             get_env_template,
             get_doctor_report,
+            get_project_recipe,
+            write_project_recipe,
             save_env_profile,
             list_workspace_sessions,
             save_workspace_session,

@@ -292,6 +292,39 @@ pub struct RuntimeNode {
     pub compose_services: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecipeTarget {
+    pub id: String,
+    pub relative_path: String,
+    pub runtime_kind: Option<RuntimeKind>,
+    pub priority: Option<i32>,
+    pub suggested_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecipe {
+    #[serde(default = "default_recipe_version")]
+    pub version: u32,
+    pub project_name: Option<String>,
+    pub primary_target_id: Option<String>,
+    pub preferred_port: Option<u16>,
+    pub install_action_id: Option<String>,
+    pub run_action_id: Option<String>,
+    pub open_action_id: Option<String>,
+    #[serde(default)]
+    pub readme_hints: Vec<String>,
+    #[serde(default)]
+    pub env_keys: Vec<String>,
+    #[serde(default)]
+    pub targets: Vec<ProjectRecipeTarget>,
+}
+
+fn default_recipe_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub execution_id: String,

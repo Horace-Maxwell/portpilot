@@ -10,7 +10,8 @@ use walkdir::WalkDir;
 
 use crate::core::models::{
     ActionKind, ActionSource, DetectedAppTarget, EnvFieldType, EnvProfile, EnvTemplateField,
-    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, RuntimeKind, RuntimeStatus,
+    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, ProjectRecipe, RuntimeKind,
+    RuntimeStatus,
 };
 
 pub const DEFAULT_WORKSPACE_ROOT: &str = "/Users/horacedong/Desktop/Github";
@@ -280,6 +281,10 @@ pub fn infer_project_from_path(
     if root.join(".env.local.example").exists() {
         detected_files.push(".env.local.example".to_string());
     }
+    let recipe = read_project_recipe(root);
+    if recipe.is_some() {
+        detected_files.push(".portpilot.json".to_string());
+    }
 
     let name = root
         .file_name()
@@ -287,14 +292,23 @@ pub fn infer_project_from_path(
         .unwrap_or("project")
         .to_string();
     let slug = slugify(&name);
-    let preferred_port = infer_port_hint(root, compose_file.as_deref());
-    let env_template = parse_env_template(root);
-    let workspace_targets = detect_workspace_targets(root);
-    let primary_target_id = workspace_targets.first().map(|target| target.id.clone());
-    let readme_hints = infer_readme_hints(root);
+    let inferred_port = infer_port_hint(root, compose_file.as_deref());
+    let mut env_template = parse_env_template(root);
+    let mut workspace_targets = detect_workspace_targets(root);
+    let inferred_readme_hints = infer_readme_hints(root);
+    let preferred_port = recipe
+        .as_ref()
+        .and_then(|item| item.preferred_port)
+        .or(inferred_port);
+    if let Some(recipe) = &recipe {
+        merge_recipe_env_keys(&mut env_template, recipe);
+        apply_recipe_targets(&mut workspace_targets, recipe);
+    }
+    let primary_target_id = select_primary_target_id(&workspace_targets, recipe.as_ref());
+    let readme_hints = merge_readme_hints(inferred_readme_hints, recipe.as_ref());
     let route_subdomain_url = format!("http://{}.localhost:{}", slug, gateway_port);
     let route_path_url = format!("http://gateway.localhost:{}/p/{}/", gateway_port, slug);
-    let actions = infer_actions(
+    let mut actions = infer_actions(
         root,
         &runtime_kind,
         preferred_port,
@@ -302,6 +316,9 @@ pub fn infer_project_from_path(
         &route_path_url,
         &workspace_targets,
     );
+    if let Some(recipe) = &recipe {
+        apply_recipe_action_preferences(&mut actions, recipe);
+    }
 
     let timestamp = now_iso();
 
@@ -331,6 +348,124 @@ pub fn infer_project_from_path(
         created_at: timestamp.clone(),
         updated_at: timestamp,
     })
+}
+
+fn read_project_recipe(root: &Path) -> Option<ProjectRecipe> {
+    let path = root.join(".portpilot.json");
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<ProjectRecipe>(&contents).ok()
+}
+
+fn merge_recipe_env_keys(fields: &mut Vec<EnvTemplateField>, recipe: &ProjectRecipe) {
+    let mut seen = fields
+        .iter()
+        .map(|field| field.key.clone())
+        .collect::<HashSet<_>>();
+    for key in &recipe.env_keys {
+        let trimmed = key.trim();
+        if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+            continue;
+        }
+        fields.push(EnvTemplateField {
+            key: trimmed.to_string(),
+            default_value: None,
+            description: Some("Suggested by .portpilot.json".to_string()),
+            field_type: EnvFieldType::Text,
+        });
+    }
+}
+
+fn apply_recipe_targets(targets: &mut Vec<DetectedAppTarget>, recipe: &ProjectRecipe) {
+    for recipe_target in &recipe.targets {
+        let Some(target) = targets.iter_mut().find(|candidate| {
+            candidate.id == recipe_target.id || candidate.relative_path == recipe_target.relative_path
+        }) else {
+            continue;
+        };
+
+        if let Some(priority) = recipe_target.priority {
+            target.priority = priority;
+        }
+        if let Some(port) = recipe_target.suggested_port {
+            target.suggested_port = Some(port);
+        }
+        if let Some(runtime_kind) = recipe_target.runtime_kind.clone() {
+            target.runtime_kind = runtime_kind;
+        }
+    }
+
+    targets.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
+}
+
+fn select_primary_target_id(
+    targets: &[DetectedAppTarget],
+    recipe: Option<&ProjectRecipe>,
+) -> Option<String> {
+    let Some(recipe) = recipe else {
+        return targets.first().map(|target| target.id.clone());
+    };
+
+    if let Some(primary_target_id) = &recipe.primary_target_id {
+        if let Some(target) = targets.iter().find(|candidate| {
+            candidate.id == *primary_target_id || candidate.relative_path == *primary_target_id
+        }) {
+            return Some(target.id.clone());
+        }
+    }
+
+    targets.first().map(|target| target.id.clone())
+}
+
+fn merge_readme_hints(inferred: Vec<String>, recipe: Option<&ProjectRecipe>) -> Vec<String> {
+    let Some(recipe) = recipe else {
+        return inferred;
+    };
+
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+    for hint in recipe
+        .readme_hints
+        .iter()
+        .chain(inferred.iter())
+        .map(|value| value.trim())
+    {
+        if hint.is_empty() || !seen.insert(hint.to_string()) {
+            continue;
+        }
+        merged.push(hint.to_string());
+    }
+    merged.truncate(6);
+    merged
+}
+
+fn apply_recipe_action_preferences(actions: &mut Vec<ProjectAction>, recipe: &ProjectRecipe) {
+    let preferred = [
+        recipe.install_action_id.as_ref(),
+        recipe.run_action_id.as_ref(),
+        recipe.open_action_id.as_ref(),
+    ];
+    let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
+
+    for action_id in preferred.into_iter().flatten() {
+        if let Some(action) = actions.iter().find(|item| item.id == *action_id) {
+            ordered.push(action.clone());
+            seen.insert(action.id.clone());
+        }
+    }
+
+    ordered.extend(
+        actions
+            .iter()
+            .filter(|action| !seen.contains(&action.id))
+            .cloned(),
+    );
+    *actions = ordered;
 }
 
 pub fn infer_actions(
@@ -1428,6 +1563,65 @@ build:
     }
 
     #[test]
+    fn applies_project_recipe_overrides() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::create_dir_all(root.join("backend")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "mixed-stack",
+              "scripts": {
+                "dev": "bun run --filter frontend dev"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(root.join("bun.lock"), "").unwrap();
+        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("frontend/package.json"),
+            r#"{
+              "name": "frontend",
+              "scripts": {
+                "dev": "vite"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".portpilot.json"),
+            r#"{
+              "version": 1,
+              "primaryTargetId": "backend",
+              "preferredPort": 5123,
+              "envKeys": ["API_TOKEN"],
+              "readmeHints": ["uv run backend.app:app"],
+              "runActionId": "run-backend-dev",
+              "targets": [
+                {
+                  "id": "backend",
+                  "relativePath": "backend",
+                  "priority": 999,
+                  "suggestedPort": 8123
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.primary_target_id.as_deref(), Some("backend"));
+        assert_eq!(project.preferred_port, Some(5123));
+        assert!(project.detected_files.iter().any(|item| item == ".portpilot.json"));
+        assert!(project.env_template.iter().any(|field| field.key == "API_TOKEN"));
+        assert_eq!(project.readme_hints.first().map(String::as_str), Some("uv run backend.app:app"));
+        assert_eq!(project.workspace_targets.first().map(|target| target.id.as_str()), Some("backend"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn smokes_real_public_repositories_when_local_clones_are_present() {
         let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
             .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
@@ -1482,5 +1676,24 @@ build:
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn applies_recipe_overrides_for_real_public_repo_when_present() {
+        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
+            .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
+        let path = Path::new(&selftest_root).join("vitesse");
+        if !path.join(".portpilot.json").exists() {
+            return;
+        }
+
+        let project = infer_project_from_path(&path, None, 42300).expect("expected vitesse inference");
+        assert_eq!(project.preferred_port, Some(4517));
+        assert!(project.env_template.iter().any(|field| field.key == "VITE_SELFTEST"));
+        assert_eq!(
+            project.readme_hints.first().map(String::as_str),
+            Some("pnpm run dev -- --host 127.0.0.1 --port 4517")
+        );
+        assert!(project.detected_files.iter().any(|item| item == ".portpilot.json"));
     }
 }

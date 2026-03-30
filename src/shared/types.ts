@@ -199,6 +199,27 @@ export interface RuntimeNode {
   compose_services: string[];
 }
 
+export interface ProjectRecipeTarget {
+  id: string;
+  relative_path: string;
+  runtime_kind: RuntimeKind | null;
+  priority: number | null;
+  suggested_port: number | null;
+}
+
+export interface ProjectRecipe {
+  version: number;
+  project_name: string | null;
+  primary_target_id: string | null;
+  preferred_port: number | null;
+  install_action_id: string | null;
+  run_action_id: string | null;
+  open_action_id: string | null;
+  readme_hints: string[];
+  env_keys: string[];
+  targets: ProjectRecipeTarget[];
+}
+
 export interface LogEntry {
   execution_id: string;
   stream: string;

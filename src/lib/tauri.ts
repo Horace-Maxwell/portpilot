@@ -9,6 +9,7 @@ import type {
   ManagedProject,
   PortLease,
   ProjectAction,
+  ProjectRecipe,
   RouteBinding,
   RuntimeNode,
   WorkspaceSession,
@@ -30,6 +31,10 @@ export const api = {
     invoke<EnvTemplateField[]>("get_env_template", { projectId }),
   getDoctorReport: (projectId: string) =>
     invoke<DoctorReport>("get_doctor_report", { projectId }),
+  getProjectRecipe: (projectId: string) =>
+    invoke<ProjectRecipe>("get_project_recipe", { projectId }),
+  writeProjectRecipe: (projectId: string) =>
+    invoke<ManagedProject>("write_project_recipe", { projectId }),
   saveEnvProfile: (
     projectId: string,
     values: Record<string, string>,
