@@ -1,6 +1,6 @@
 [package]
 name = "portpilot"
-version = "0.1.1"
+version = "0.1.2"
 description = "PortPilot desktop repo control console"
 authors = ["Horace Dong"]
 license = "MIT"
