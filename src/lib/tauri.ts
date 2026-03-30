@@ -65,7 +65,11 @@ export const api = {
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
   listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
   getLocalHttpsStatus: () => invoke<LocalHttpsStatus>("get_local_https_status"),
+  refreshLocalHttpsStatus: () => invoke<LocalHttpsStatus>("refresh_local_https_status"),
+  installLocalHttps: () => invoke<LocalHttpsStatus>("install_local_https"),
   listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
+  inspectLocalService: (serviceName: string) =>
+    invoke<LocalServicePreset>("inspect_local_service", { serviceName }),
   startLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("start_local_service", { serviceName }),
   restartLocalService: (serviceName: string) =>

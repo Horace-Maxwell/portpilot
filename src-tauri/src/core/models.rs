@@ -124,8 +124,9 @@ pub enum LocalServiceStatus {
 #[serde(rename_all = "snake_case")]
 pub enum LocalHttpsCertificateState {
     Trusted,
+    NeedsInstall,
     NeedsTrust,
-    Missing,
+    FallbackSelfSigned,
     Error,
 }
 
@@ -418,8 +419,10 @@ pub struct LocalServicePreset {
     pub port: Option<u16>,
     pub ready: bool,
     pub status: LocalServiceStatus,
+    pub ready_detail: Option<String>,
     pub hint: Option<String>,
     pub start_command: Option<String>,
+    pub stop_command: Option<String>,
     pub managed: bool,
     pub management_kind: Option<String>,
     #[serde(default)]

@@ -71,7 +71,7 @@ async fn start_https_gateway(
                 http_port,
                 https_port: None,
                 provider: None,
-                certificate_state: LocalHttpsCertificateState::Missing,
+                certificate_state: LocalHttpsCertificateState::NeedsInstall,
                 detail: Some(
                     "PortPilot could not find a free localhost port for the HTTPS gateway."
                         .to_string(),
@@ -88,7 +88,7 @@ async fn start_https_gateway(
                 http_port,
                 https_port: None,
                 provider: None,
-                certificate_state: LocalHttpsCertificateState::Missing,
+                certificate_state: LocalHttpsCertificateState::NeedsInstall,
                 detail: Some(
                     "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
                         .to_string(),
@@ -142,6 +142,108 @@ async fn start_https_gateway(
         certificate_state: assets.certificate_state,
         detail: assets.detail,
     }
+}
+
+pub fn refresh_local_https_status(
+    data_dir: &Path,
+    current: &LocalHttpsStatus,
+) -> Result<LocalHttpsStatus, String> {
+    let provider = current.provider.as_deref();
+    let cert_path = data_dir.join("gateway").join("tls").join("localhost-cert.pem");
+    let key_path = data_dir.join("gateway").join("tls").join("localhost-key.pem");
+
+    let detail = if current.enabled {
+        current.detail.clone()
+    } else {
+        None
+    };
+
+    if current.enabled && cert_path.is_file() && key_path.is_file() {
+        return Ok(status_for_existing_listener(
+            current.http_port,
+            current.https_port,
+            provider,
+            detail,
+        ));
+    }
+
+    if let Some(assets) = prepare_https_assets(data_dir)? {
+        return Ok(LocalHttpsStatus {
+            enabled: current.enabled,
+            http_port: current.http_port,
+            https_port: current.https_port,
+            provider: Some(assets.provider),
+            certificate_state: assets.certificate_state,
+            detail: assets.detail,
+        });
+    }
+
+    Ok(LocalHttpsStatus {
+        enabled: false,
+        http_port: current.http_port,
+        https_port: None,
+        provider: None,
+        certificate_state: LocalHttpsCertificateState::NeedsInstall,
+        detail: Some(
+            "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
+                .to_string(),
+        ),
+    })
+}
+
+pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Result<LocalHttpsStatus, String> {
+    if !command_exists("mkcert") {
+        if !command_exists("brew") {
+            return Err(
+                "PortPilot could not find Homebrew. Install Homebrew first, then run `brew install mkcert nss && mkcert -install`."
+                    .to_string(),
+            );
+        }
+        let install = Command::new("brew")
+            .args(["install", "mkcert", "nss"])
+            .output()
+            .map_err(|error| format!("Failed to install mkcert with Homebrew: {error}"))?;
+        if !install.status.success() {
+            return Err(String::from_utf8_lossy(&install.stderr).trim().to_string());
+        }
+    }
+
+    let installed = Command::new("mkcert")
+        .arg("-install")
+        .output()
+        .map_err(|error| format!("Failed to run mkcert -install: {error}"))?;
+    if !installed.status.success() {
+        return Err(String::from_utf8_lossy(&installed.stderr).trim().to_string());
+    }
+
+    let cert_path = data_dir.join("gateway").join("tls").join("localhost-cert.pem");
+    let key_path = data_dir.join("gateway").join("tls").join("localhost-key.pem");
+    let generated = Command::new("mkcert")
+        .args([
+            "-cert-file",
+            cert_path.to_string_lossy().as_ref(),
+            "-key-file",
+            key_path.to_string_lossy().as_ref(),
+            "localhost",
+            "gateway.localhost",
+            "*.localhost",
+            "127.0.0.1",
+        ])
+        .output()
+        .map_err(|error| format!("Failed to regenerate trusted localhost certificates: {error}"))?;
+    if !generated.status.success() {
+        return Err(String::from_utf8_lossy(&generated.stderr).trim().to_string());
+    }
+
+    let mut refreshed = refresh_local_https_status(data_dir, current)?;
+    if current.provider.as_deref() == Some("openssl") && current.enabled {
+        refreshed.certificate_state = LocalHttpsCertificateState::FallbackSelfSigned;
+        refreshed.detail = Some(
+            "mkcert is installed and a trusted localhost certificate is ready. Restart PortPilot to swap the active HTTPS listener away from the self-signed fallback."
+                .to_string(),
+        );
+    }
+    Ok(refreshed)
 }
 
 fn build_router(state: GatewayState) -> Router {
@@ -309,7 +411,14 @@ fn response_text(status: StatusCode, message: &str) -> Response<Body> {
 }
 
 fn choose_gateway_port(start: u16) -> Option<u16> {
-    (start..=start + 20).find(|port| is_free_tcp(*port))
+    choose_gateway_port_with(start, is_free_tcp)
+}
+
+fn choose_gateway_port_with<F>(start: u16, is_free: F) -> Option<u16>
+where
+    F: Fn(u16) -> bool,
+{
+    (start..=start + 20).find(|port| is_free(*port))
 }
 
 fn prepare_https_assets(data_dir: &Path) -> Result<Option<HttpsAssets>, String> {
@@ -334,14 +443,24 @@ fn prepare_https_assets(data_dir: &Path) -> Result<Option<HttpsAssets>, String> 
             .output()
             .map_err(|error| format!("Failed to launch mkcert: {error}"))?;
         if output.status.success() {
+            let trusted = mkcert_is_trusted();
             return Ok(Some(HttpsAssets {
                 provider: "mkcert".to_string(),
-                certificate_state: LocalHttpsCertificateState::Trusted,
+                certificate_state: if trusted {
+                    LocalHttpsCertificateState::Trusted
+                } else {
+                    LocalHttpsCertificateState::NeedsTrust
+                },
                 cert_path,
                 key_path,
                 detail: Some(
-                    "PortPilot generated a trusted localhost certificate with mkcert."
-                        .to_string(),
+                    if trusted {
+                        "PortPilot generated a trusted localhost certificate with mkcert."
+                            .to_string()
+                    } else {
+                        "PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile."
+                            .to_string()
+                    },
                 ),
             }));
         }
@@ -372,7 +491,7 @@ fn prepare_https_assets(data_dir: &Path) -> Result<Option<HttpsAssets>, String> 
         if output.status.success() {
             return Ok(Some(HttpsAssets {
                 provider: "openssl".to_string(),
-                certificate_state: LocalHttpsCertificateState::NeedsTrust,
+                certificate_state: LocalHttpsCertificateState::FallbackSelfSigned,
                 cert_path,
                 key_path,
                 detail: Some(
@@ -385,6 +504,108 @@ fn prepare_https_assets(data_dir: &Path) -> Result<Option<HttpsAssets>, String> 
     }
 
     Ok(None)
+}
+
+fn status_for_existing_listener(
+    http_port: u16,
+    https_port: Option<u16>,
+    provider: Option<&str>,
+    current_detail: Option<String>,
+) -> LocalHttpsStatus {
+    match provider {
+        Some("mkcert") => {
+            let trusted = mkcert_is_trusted();
+            LocalHttpsStatus {
+                enabled: true,
+                http_port,
+                https_port,
+                provider: Some("mkcert".to_string()),
+                certificate_state: if trusted {
+                    LocalHttpsCertificateState::Trusted
+                } else {
+                    LocalHttpsCertificateState::NeedsTrust
+                },
+                detail: Some(if trusted {
+                    "PortPilot is serving localhost HTTPS with a trusted mkcert certificate."
+                        .to_string()
+                } else {
+                    "PortPilot is serving HTTPS with mkcert-generated certificates, but the local CA still needs to be trusted."
+                        .to_string()
+                }),
+            }
+        }
+        Some("openssl") => LocalHttpsStatus {
+            enabled: true,
+            http_port,
+            https_port,
+            provider: Some("openssl".to_string()),
+            certificate_state: LocalHttpsCertificateState::FallbackSelfSigned,
+            detail: current_detail.or_else(|| {
+                Some(
+                    "PortPilot is currently serving HTTPS with a self-signed localhost certificate."
+                        .to_string(),
+                )
+            }),
+        },
+        Some(other) => LocalHttpsStatus {
+            enabled: true,
+            http_port,
+            https_port,
+            provider: Some(other.to_string()),
+            certificate_state: LocalHttpsCertificateState::Error,
+            detail: Some("PortPilot detected an unknown HTTPS certificate provider.".to_string()),
+        },
+        None => LocalHttpsStatus {
+            enabled: false,
+            http_port,
+            https_port: None,
+            provider: None,
+            certificate_state: LocalHttpsCertificateState::NeedsInstall,
+            detail: Some(
+                "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
+                    .to_string(),
+            ),
+        },
+    }
+}
+
+fn mkcert_is_trusted() -> bool {
+    if !command_exists("mkcert") {
+        return false;
+    }
+
+    let caroot = Command::new("mkcert").arg("-CAROOT").output().ok();
+    let Some(output) = caroot else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.is_empty() {
+        return false;
+    }
+    let root_ca = Path::new(&root).join("rootCA.pem");
+    if !root_ca.is_file() {
+        return false;
+    }
+
+    if cfg!(target_os = "macos") {
+        let find = Command::new("security")
+            .args([
+                "find-certificate",
+                "-a",
+                "-c",
+                "mkcert",
+                "/Library/Keychains/System.keychain",
+            ])
+            .output();
+        if let Ok(output) = find {
+            return output.status.success() && !output.stdout.is_empty();
+        }
+    }
+
+    true
 }
 
 fn command_exists(binary: &str) -> bool {
@@ -401,7 +622,7 @@ mod tests {
     use reqwest::Client;
     use uuid::Uuid;
 
-    use super::{build_router, choose_gateway_port, GatewayState};
+    use super::{build_router, choose_gateway_port_with, GatewayState};
     use crate::storage::store::ProjectStore;
 
     #[test]
@@ -421,7 +642,15 @@ mod tests {
 
     #[test]
     fn chooses_gateway_port_from_requested_range() {
-        let port = choose_gateway_port(42500);
-        assert!(port.is_some());
+        let start = 42300;
+        let port = choose_gateway_port_with(start, |candidate| candidate == start);
+        assert_eq!(port, Some(start));
+    }
+
+    #[test]
+    fn skips_occupied_ports_inside_requested_range() {
+        let start = 42300;
+        let port = choose_gateway_port_with(start, |candidate| candidate == start + 2);
+        assert_eq!(port, Some(start + 2));
     }
 }

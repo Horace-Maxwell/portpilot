@@ -120,9 +120,11 @@ export default function App() {
     [runtimeNodes, selectedProject],
   );
   const preferredProjectUrl = (project: ManagedProject) =>
-    runtimeNodes
-      .find((node) => node.project_id === project.id)
-      ?.local_urls.find((item) => item.recommended)?.url ?? project.route_path_url;
+      runtimeNodes
+        .find((node) => node.project_id === project.id)
+        ?.local_urls.find((item) => item.recommended)?.url ?? project.route_path_url;
+  const preferredRuntimeNodeUrl = (node: RuntimeNode) =>
+    node.local_urls.find((item) => item.recommended)?.url ?? node.route_url;
   const filteredLogs = useMemo(
     () =>
       selectedLogs.filter((entry) => {
@@ -556,6 +558,32 @@ export default function App() {
           : `${restarted.label} restarted.`,
       );
       await refreshAll();
+    });
+  }
+
+  async function handleRefreshHttps() {
+    await runBusy("https-refresh", async () => {
+      const status = await api.refreshLocalHttpsStatus();
+      setLocalHttpsStatus(status);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? "已刷新本地 HTTPS 状态。"
+          : "Refreshed local HTTPS status.",
+      );
+      await refreshRuntimeOnly();
+    });
+  }
+
+  async function handleInstallTrustedHttps() {
+    await runBusy("https-install", async () => {
+      const status = await api.installLocalHttps();
+      setLocalHttpsStatus(status);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? "已完成本地 HTTPS 安装或刷新，请根据状态提示继续。"
+          : "Local HTTPS install or refresh completed. Follow the updated status if more steps are needed.",
+      );
+      await refreshRuntimeOnly();
     });
   }
 
@@ -1432,7 +1460,7 @@ export default function App() {
                             <span>{t("Profile", "画像")}: {formatProfileKind(selectedRuntimeNodes[0].kind, locale)}</span>
                             <span>{t("Phase", "阶段")}: {formatRunPhase(selectedRuntimeNodes[0].run_phase, locale)}</span>
                             <span>{t("Port", "端口")}: {selectedRuntimeNodes[0].port ?? "n/a"}</span>
-                            <span>{t("Route", "路由")}: {selectedRuntimeNodes[0].route_url}</span>
+                            <span>{t("Route", "路由")}: {preferredRuntimeNodeUrl(selectedRuntimeNodes[0])}</span>
                           </div>
                           {selectedRuntimeNodes[0].local_urls.length > 0 && (
                             <div className="runtime-summary__meta">
@@ -1559,13 +1587,31 @@ export default function App() {
                     {formatHttpsState(localHttpsStatus, locale)}
                   </span>
                 </div>
-                <div className="runtime-summary__meta">
-                  <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
-                  <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
-                  <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
-                </div>
-              </article>
-            )}
+                  <div className="runtime-summary__meta">
+                    <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
+                    <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
+                    <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
+                  </div>
+                  <div className="action-row">
+                    {localHttpsStatus.certificate_state !== "trusted" && (
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleInstallTrustedHttps()}
+                        type="button"
+                      >
+                        {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
+                      </button>
+                    )}
+                    <button
+                      className="secondary-button"
+                      onClick={() => void handleRefreshHttps()}
+                      type="button"
+                    >
+                      {t("Refresh HTTPS", "刷新 HTTPS")}
+                    </button>
+                  </div>
+                </article>
+              )}
             <div className="runtime-node-grid">
               {localServicePresets.map((service) => (
                 <article key={service.name} className="runtime-node-card runtime-node-card--service">
@@ -1590,8 +1636,14 @@ export default function App() {
                   {service.used_by_projects.length > 0 && (
                     <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
                   )}
+                  {service.ready_detail && (
+                    <p className="runtime-summary__copy">{localizeBackendMessage(service.ready_detail, locale)}</p>
+                  )}
                   {service.start_command && (
                     <code className="runtime-node-card__log">{service.start_command}</code>
+                  )}
+                  {service.stop_command && service.status === "ready" && (
+                    <code className="runtime-node-card__log">{service.stop_command}</code>
                   )}
                   <div className="action-row">
                     {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
@@ -1603,7 +1655,7 @@ export default function App() {
                         {t("Start Service", "启动服务")}
                       </button>
                     )}
-                    {service.ready && service.managed && (
+                    {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
                       <button
                         className="secondary-button"
                         onClick={() => void handleRestartService(service)}
@@ -1697,7 +1749,7 @@ export default function App() {
                   <div className="action-row">
                     <button
                       className="secondary-button"
-                      onClick={() => void openUrl(node.route_url)}
+                      onClick={() => void openUrl(preferredRuntimeNodeUrl(node))}
                       type="button"
                     >
                       {t("Open Route", "打开路由")}
@@ -2025,8 +2077,9 @@ function formatLocalServiceStatus(
 function formatHttpsState(status: LocalHttpsStatus, locale: Locale) {
   const labels: Record<LocalHttpsStatus["certificate_state"], { en: string; zh: string }> = {
     trusted: { en: "HTTPS trusted", zh: "HTTPS 已信任" },
+    needs_install: { en: "install trusted HTTPS", zh: "需安装受信任 HTTPS" },
     needs_trust: { en: "HTTPS needs trust", zh: "HTTPS 需信任" },
-    missing: { en: "HTTPS unavailable", zh: "HTTPS 未启用" },
+    fallback_self_signed: { en: "self-signed HTTPS", zh: "自签名 HTTPS" },
     error: { en: "HTTPS error", zh: "HTTPS 异常" },
   };
   return locale === "zh-CN"
@@ -2069,6 +2122,11 @@ function localizeBackendMessage(message: string | null | undefined, locale: Loca
   const replacements: Array<[RegExp, string]> = [
     [/Start the required compose services first, then run the recommended entrypoint\./g, "先启动所需的 Compose 服务，再运行推荐入口。"],
     [/Start the required local services first\./g, "先启动所需的本地服务。"],
+    [/PortPilot could not find mkcert yet\. HTTPS can only fall back to a self-signed certificate until mkcert is installed\./g, "PortPilot 还没有找到 mkcert。在安装 mkcert 之前，HTTPS 只能回退到自签名证书。"],
+    [/PortPilot is currently serving HTTPS with a self-signed localhost certificate\./g, "PortPilot 当前正在使用自签名 localhost 证书提供 HTTPS。"],
+    [/PortPilot is serving localhost HTTPS with a trusted mkcert certificate\./g, "PortPilot 当前正在使用受信任的 mkcert 证书提供 localhost HTTPS。"],
+    [/PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile\./g, "PortPilot 已用 mkcert 生成 localhost 证书，但当前浏览器环境还需要信任本地 CA。"],
+    [/mkcert is installed and a trusted localhost certificate is ready\. Restart PortPilot to swap the active HTTPS listener away from the self-signed fallback\./g, "mkcert 已安装，受信任的 localhost 证书也已准备好。请重启 PortPilot，把当前 HTTPS 监听从自签名证书切换过去。"],
     [/Open the live route or inspect the runtime panel\./g, "打开在线路由或查看运行时面板。"],
     [/Open the live route or inspect recent logs\./g, "打开在线路由或查看最近日志。"],
     [/Fill in the required compose env values before starting this stack\./g, "先补齐 Compose 所需环境变量，再启动这个栈。"],
@@ -2085,6 +2143,12 @@ function localizeBackendMessage(message: string | null | undefined, locale: Loca
     [/Free fixed port (\d+) or change the command arguments before starting this project\./g, "请先释放固定端口 $1，或修改命令参数后再启动这个项目。"],
     [/Compose is missing (\d+) required env values?: (.+)\./g, "Compose 缺少 $1 个必需环境变量：$2。"],
     [/Start the required local services? first: (.+)\./g, "请先启动所需的本地服务：$1。"],
+    [/is ready on localhost:(\d+)\./g, "已在 localhost:$1 就绪。"],
+    [/is stopped right now, but PortPilot can start the managed Docker service\./g, "当前已停止，但 PortPilot 可以直接启动受管的 Docker 服务。"],
+    [/is stopped right now, but PortPilot can start the native service\./g, "当前已停止，但 PortPilot 可以直接启动本机原生服务。"],
+    [/has a managed instance, but it is not healthy or did not bind localhost:(\d+)\./g, "存在一个受管实例，但它还不健康，或没有成功绑定 localhost:$1。"],
+    [/is already running on localhost:(\d+) outside PortPilot\. It will be reused without taking ownership\./g, "它已经在 localhost:$1 上由外部实例运行，PortPilot 会直接复用，但不会接管它。"],
+    [/is not installed or PortPilot cannot manage it automatically on this machine\./g, "当前机器上还没有安装这个服务，或者 PortPilot 还不能自动管理它。"],
     [/This project hardcodes its port in ([^,]+), so PortPilot cannot move it automatically\./g, "这个项目在 $1 里写死了端口，所以 PortPilot 无法自动改派。"],
     [/This project hardcodes its port, so PortPilot cannot move it automatically\./g, "这个项目写死了端口，所以 PortPilot 无法自动改派。"],
     [/\brunning\b/g, "运行中"],

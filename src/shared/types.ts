@@ -43,7 +43,12 @@ export type LocalServiceStatus =
   | "failed"
   | "unmanaged_already_running"
   | "unmanaged";
-export type LocalHttpsCertificateState = "trusted" | "needs_trust" | "missing" | "error";
+export type LocalHttpsCertificateState =
+  | "trusted"
+  | "needs_install"
+  | "needs_trust"
+  | "fallback_self_signed"
+  | "error";
 
 export interface ProjectProfile {
   kind: ProjectProfileKind;
@@ -278,8 +283,10 @@ export interface LocalServicePreset {
   port: number | null;
   ready: boolean;
   status: LocalServiceStatus;
+  ready_detail: string | null;
   hint: string | null;
   start_command: string | null;
+  stop_command: string | null;
   managed: boolean;
   management_kind: string | null;
   used_by_projects: string[];
