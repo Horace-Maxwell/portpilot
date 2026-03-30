@@ -19,6 +19,34 @@ pub fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageManager {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+impl PackageManager {
+    fn install_command(self) -> &'static str {
+        match self {
+            Self::Npm => "npm install",
+            Self::Pnpm => "pnpm install",
+            Self::Yarn => "yarn install",
+            Self::Bun => "bun install",
+        }
+    }
+
+    fn run_script_command(self, script: &str) -> String {
+        match self {
+            Self::Npm => format!("npm run {script}"),
+            Self::Pnpm => format!("pnpm run {script}"),
+            Self::Yarn => format!("yarn run {script}"),
+            Self::Bun => format!("bun run {script}"),
+        }
+    }
+}
+
 pub fn slugify(value: &str) -> String {
     let mut output = String::new();
     let mut last_dash = false;
@@ -314,7 +342,16 @@ pub fn infer_actions(
     let mut actions = Vec::new();
     let workdir = root.to_string_lossy().to_string();
     if root.join("package.json").exists() {
-        actions.push(action("install-npm", "Install", ActionKind::Install, "npm install", &workdir, None, ActionSource::Inferred));
+        let package_manager = detect_package_manager(root);
+        actions.push(action(
+            "install-node",
+            "Install",
+            ActionKind::Install,
+            package_manager.install_command(),
+            &workdir,
+            None,
+            ActionSource::Inferred,
+        ));
 
         if let Some(scripts) = read_package_scripts(root) {
             let preferred_runs = [("dev", "Web Dev"), ("start", "Start"), ("preview", "Preview"), ("desktop:dev", "Desktop Dev")];
@@ -325,7 +362,7 @@ pub fn infer_actions(
                         &format!("run-{script}"),
                         label,
                         ActionKind::Run,
-                        &format!("npm run {script}"),
+                        &package_manager.run_script_command(script),
                         &workdir,
                         port_hint,
                         ActionSource::Inferred,
@@ -359,7 +396,7 @@ pub fn infer_actions(
                     &format!("script-{script}"),
                     &script.replace(':', " / "),
                     kind,
-                    &format!("npm run {script}"),
+                    &package_manager.run_script_command(&script),
                     &workdir,
                     None,
                     ActionSource::Inferred,
@@ -368,39 +405,7 @@ pub fn infer_actions(
         }
 
         for target in workspace_targets {
-            let target_root = Path::new(&target.root_path);
-            let Some(target_scripts) = read_package_scripts(target_root) else {
-                continue;
-            };
-
-            for (script, label) in [("dev", "Run"), ("start", "Start"), ("preview", "Preview")] {
-                if target_scripts.contains_key(script) {
-                    actions.push(action(
-                        &format!("workspace-{}-{script}", target.id),
-                        &format!("{label} {}", target.name),
-                        ActionKind::Run,
-                        &format!("npm run {script}"),
-                        &target.root_path,
-                        target.suggested_port,
-                        ActionSource::Inferred,
-                    ));
-                }
-            }
-
-            for script in target_scripts.keys() {
-                if is_build_script(script) {
-                    actions.push(action(
-                        &format!("workspace-{}-build-{script}", target.id),
-                        &format!("Build {}", target.name),
-                        ActionKind::Build,
-                        &format!("npm run {script}"),
-                        &target.root_path,
-                        None,
-                        ActionSource::Inferred,
-                    ));
-                    break;
-                }
-            }
+            actions.extend(infer_target_actions(target));
         }
     } else {
         match runtime_kind {
@@ -418,8 +423,22 @@ pub fn infer_actions(
                 actions.push(action("build-rust", "Build", ActionKind::Build, "cargo build --release", &workdir, None, ActionSource::Inferred));
             }
             RuntimeKind::Go => {
-                actions.push(action("run-go", "Run", ActionKind::Run, "go run .", &workdir, port_hint, ActionSource::Inferred));
-                actions.push(action("build-go", "Build", ActionKind::Build, "go build ./...", &workdir, None, ActionSource::Inferred));
+                let make_targets = read_make_targets(root);
+                if make_targets.contains("install") {
+                    actions.push(action("install-go-make", "Install", ActionKind::Install, "make install", &workdir, None, ActionSource::Inferred));
+                }
+                let run_command = if make_targets.contains("run") {
+                    "make run"
+                } else {
+                    "go run ."
+                };
+                let build_command = if make_targets.contains("build") {
+                    "make build"
+                } else {
+                    "go build ./..."
+                };
+                actions.push(action("run-go", "Run", ActionKind::Run, run_command, &workdir, port_hint, ActionSource::Inferred));
+                actions.push(action("build-go", "Build", ActionKind::Build, build_command, &workdir, None, ActionSource::Inferred));
             }
             RuntimeKind::Compose => {}
             RuntimeKind::Unknown | RuntimeKind::Node => {}
@@ -482,50 +501,18 @@ fn detect_workspace_targets(root: &Path) -> Vec<DetectedAppTarget> {
             }
 
             let target_path = Path::new(&target_root);
-            if !target_path.join("package.json").exists() {
-                continue;
+            if let Some(target) = build_detected_target(root, target_path) {
+                output.push(target);
             }
+        }
+    }
 
-            let scripts = read_package_scripts(target_path).unwrap_or_default();
-            if scripts.is_empty() {
-                continue;
-            }
-
-            let Some(relative_path) = target_path
-                .strip_prefix(root)
-                .ok()
-                .map(|value| value.to_string_lossy().to_string())
-            else {
-                continue;
-            };
-
-            let name = read_package_name(target_path)
-                .or_else(|| {
-                    target_path
-                        .file_name()
-                        .and_then(|value| value.to_str())
-                        .map(ToString::to_string)
-                })
-                .unwrap_or_else(|| relative_path.clone());
-
-            let available_actions = scripts
-                .keys()
-                .filter(|script| {
-                    matches!(script.as_str(), "dev" | "start" | "preview")
-                        || is_build_script(script)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-
-            output.push(DetectedAppTarget {
-                id: slugify(&relative_path),
-                name,
-                relative_path,
-                root_path: target_root.clone(),
-                runtime_kind: RuntimeKind::Node,
-                suggested_port: infer_port_hint(target_path, None),
-                available_actions,
-            });
+    for target_path in find_nested_target_dirs(root) {
+        if !seen_paths.insert(target_path.to_string_lossy().to_string()) {
+            continue;
+        }
+        if let Some(target) = build_detected_target(root, &target_path) {
+            output.push(target);
         }
     }
 
@@ -547,8 +534,11 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
         Regex::new(r"`(npm (?:install|run [\w:-]+))`").expect("regex"),
         Regex::new(r"`(pnpm (?:install|dev|run [\w:-]+))`").expect("regex"),
         Regex::new(r"`(yarn(?:\s+[\w:-]+)?)`").expect("regex"),
+        Regex::new(r"`(bun (?:install|run [\w:-]+))`").expect("regex"),
+        Regex::new(r"`(make [\w:-]+)`").expect("regex"),
         Regex::new(r"`(docker compose [^`]+)`").expect("regex"),
         Regex::new(r"`(python -m [^`]+)`").expect("regex"),
+        Regex::new(r"`(uv (?:sync|run [^`]+))`").expect("regex"),
     ];
 
     let mut hints = Vec::new();
@@ -650,6 +640,41 @@ fn read_package_name(root: &Path) -> Option<String> {
     value.get("name")?.as_str().map(ToString::to_string)
 }
 
+fn read_package_manager(root: &Path) -> Option<String> {
+    let contents = fs::read_to_string(root.join("package.json")).ok()?;
+    let value: Value = serde_json::from_str(&contents).ok()?;
+    value.get("packageManager")?.as_str().map(ToString::to_string)
+}
+
+fn detect_package_manager(root: &Path) -> PackageManager {
+    if let Some(package_manager) = read_package_manager(root) {
+        let normalized = package_manager.to_ascii_lowercase();
+        if normalized.starts_with("pnpm@") {
+            return PackageManager::Pnpm;
+        }
+        if normalized.starts_with("yarn@") {
+            return PackageManager::Yarn;
+        }
+        if normalized.starts_with("bun@") {
+            return PackageManager::Bun;
+        }
+    }
+
+    for (file_name, package_manager) in [
+        ("pnpm-lock.yaml", PackageManager::Pnpm),
+        ("yarn.lock", PackageManager::Yarn),
+        ("bun.lock", PackageManager::Bun),
+        ("bun.lockb", PackageManager::Bun),
+        ("package-lock.json", PackageManager::Npm),
+    ] {
+        if root.join(file_name).exists() {
+            return package_manager;
+        }
+    }
+
+    PackageManager::Npm
+}
+
 fn read_package_workspaces(root: &Path) -> Vec<String> {
     let contents = match fs::read_to_string(root.join("package.json")) {
         Ok(contents) => contents,
@@ -729,6 +754,299 @@ fn expand_workspace_pattern(root: &Path, pattern: &str) -> Vec<String> {
         .filter(|path| path.is_dir())
         .map(|path| path.to_string_lossy().to_string())
         .collect()
+}
+
+fn find_nested_target_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return targets;
+    };
+
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() || should_skip_dir(&path) {
+            continue;
+        }
+        if has_supported_manifest(&path) {
+            targets.push(path.clone());
+        }
+
+        let Some(dir_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !matches!(dir_name, "apps" | "packages" | "services") {
+            continue;
+        }
+
+        let Ok(child_entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for child in child_entries.filter_map(Result::ok).map(|item| item.path()) {
+            if child.is_dir() && !should_skip_dir(&child) && has_supported_manifest(&child) {
+                targets.push(child);
+            }
+        }
+    }
+
+    targets
+}
+
+fn has_supported_manifest(path: &Path) -> bool {
+    path.join("package.json").exists()
+        || path.join("pyproject.toml").exists()
+        || path.join("go.mod").exists()
+        || path.join("Cargo.toml").exists()
+}
+
+fn infer_runtime_kind_for_path(path: &Path) -> Option<RuntimeKind> {
+    if path.join("package.json").exists() {
+        Some(RuntimeKind::Node)
+    } else if path.join("pyproject.toml").exists() {
+        Some(RuntimeKind::Python)
+    } else if path.join("Cargo.toml").exists() {
+        Some(RuntimeKind::Rust)
+    } else if path.join("go.mod").exists() {
+        Some(RuntimeKind::Go)
+    } else {
+        None
+    }
+}
+
+fn build_detected_target(root: &Path, target_path: &Path) -> Option<DetectedAppTarget> {
+    let runtime_kind = infer_runtime_kind_for_path(target_path)?;
+    let relative_path = target_path
+        .strip_prefix(root)
+        .ok()
+        .map(|value| value.to_string_lossy().to_string())?;
+    if relative_path.is_empty() {
+        return None;
+    }
+
+    let name = match runtime_kind {
+        RuntimeKind::Node => read_package_name(target_path),
+        _ => None,
+    }
+    .or_else(|| {
+        target_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(ToString::to_string)
+    })
+    .unwrap_or_else(|| relative_path.clone());
+
+    let available_actions = target_available_actions(target_path, &runtime_kind);
+    if available_actions.is_empty() {
+        return None;
+    }
+
+    Some(DetectedAppTarget {
+        id: slugify(&relative_path),
+        name,
+        relative_path,
+        root_path: target_path.to_string_lossy().to_string(),
+        runtime_kind,
+        suggested_port: infer_port_hint(target_path, first_existing(target_path, &["docker-compose.yml", "docker-compose.yaml", "compose.yaml"]).as_deref()),
+        available_actions,
+    })
+}
+
+fn target_available_actions(target_path: &Path, runtime_kind: &RuntimeKind) -> Vec<String> {
+    match runtime_kind {
+        RuntimeKind::Node => read_package_scripts(target_path)
+            .unwrap_or_default()
+            .keys()
+            .filter(|script| {
+                matches!(script.as_str(), "dev" | "start" | "preview")
+                    || is_build_script(script)
+            })
+            .cloned()
+            .collect(),
+        RuntimeKind::Python => vec!["run".to_string(), "install".to_string()],
+        RuntimeKind::Rust => vec!["run".to_string(), "build".to_string()],
+        RuntimeKind::Go => {
+            let make_targets = read_make_targets(target_path);
+            if make_targets.contains("run") || make_targets.contains("build") || make_targets.contains("install") {
+                let mut actions = Vec::new();
+                if make_targets.contains("install") {
+                    actions.push("install".to_string());
+                }
+                if make_targets.contains("run") {
+                    actions.push("run".to_string());
+                }
+                if make_targets.contains("build") {
+                    actions.push("build".to_string());
+                }
+                actions
+            } else {
+                vec!["run".to_string(), "build".to_string()]
+            }
+        }
+        RuntimeKind::Compose => vec!["run".to_string()],
+        RuntimeKind::Unknown => Vec::new(),
+    }
+}
+
+fn infer_target_actions(target: &DetectedAppTarget) -> Vec<ProjectAction> {
+    let target_root = Path::new(&target.root_path);
+    match target.runtime_kind {
+        RuntimeKind::Node => {
+            let Some(target_scripts) = read_package_scripts(target_root) else {
+                return Vec::new();
+            };
+            let package_manager = detect_package_manager(target_root);
+            let mut actions = Vec::new();
+
+            for (script, label) in [("dev", "Run"), ("start", "Start"), ("preview", "Preview"), ("desktop:dev", "Desktop Dev")] {
+                if target_scripts.contains_key(script) {
+                    actions.push(action(
+                        &format!("workspace-{}-{script}", target.id),
+                        &format!("{label} {}", target.name),
+                        ActionKind::Run,
+                        &package_manager.run_script_command(script),
+                        &target.root_path,
+                        target.suggested_port,
+                        ActionSource::Inferred,
+                    ));
+                }
+            }
+
+            for script in target_scripts.keys() {
+                if is_build_script(script) {
+                    actions.push(action(
+                        &format!("workspace-{}-build-{script}", target.id),
+                        &format!("Build {}", target.name),
+                        ActionKind::Build,
+                        &package_manager.run_script_command(script),
+                        &target.root_path,
+                        None,
+                        ActionSource::Inferred,
+                    ));
+                    break;
+                }
+            }
+
+            actions
+        }
+        RuntimeKind::Python => vec![
+            action(
+                &format!("workspace-{}-install", target.id),
+                &format!("Install {}", target.name),
+                ActionKind::Install,
+                "uv sync || pip install -e .",
+                &target.root_path,
+                None,
+                ActionSource::Inferred,
+            ),
+            action(
+                &format!("workspace-{}-run", target.id),
+                &format!("Run {}", target.name),
+                ActionKind::Run,
+                "uv run . || python -m .",
+                &target.root_path,
+                target.suggested_port,
+                ActionSource::Inferred,
+            ),
+        ],
+        RuntimeKind::Rust => vec![
+            action(
+                &format!("workspace-{}-run", target.id),
+                &format!("Run {}", target.name),
+                ActionKind::Run,
+                "cargo run",
+                &target.root_path,
+                target.suggested_port,
+                ActionSource::Inferred,
+            ),
+            action(
+                &format!("workspace-{}-build", target.id),
+                &format!("Build {}", target.name),
+                ActionKind::Build,
+                "cargo build --release",
+                &target.root_path,
+                None,
+                ActionSource::Inferred,
+            ),
+        ],
+        RuntimeKind::Go => {
+            let make_targets = read_make_targets(target_root);
+            let install_command = if make_targets.contains("install") {
+                "make install"
+            } else {
+                "go mod download"
+            };
+            let run_command = if make_targets.contains("run") {
+                "make run"
+            } else {
+                "go run ."
+            };
+            let build_command = if make_targets.contains("build") {
+                "make build"
+            } else {
+                "go build ./..."
+            };
+            vec![
+                action(
+                    &format!("workspace-{}-install", target.id),
+                    &format!("Install {}", target.name),
+                    ActionKind::Install,
+                    install_command,
+                    &target.root_path,
+                    None,
+                    ActionSource::Inferred,
+                ),
+                action(
+                    &format!("workspace-{}-run", target.id),
+                    &format!("Run {}", target.name),
+                    ActionKind::Run,
+                    run_command,
+                    &target.root_path,
+                    target.suggested_port,
+                    ActionSource::Inferred,
+                ),
+                action(
+                    &format!("workspace-{}-build", target.id),
+                    &format!("Build {}", target.name),
+                    ActionKind::Build,
+                    build_command,
+                    &target.root_path,
+                    None,
+                    ActionSource::Inferred,
+                ),
+            ]
+        }
+        RuntimeKind::Compose | RuntimeKind::Unknown => Vec::new(),
+    }
+}
+
+fn read_make_targets(root: &Path) -> HashSet<String> {
+    let makefiles = ["Makefile", "makefile", "GNUmakefile"];
+    for file_name in makefiles {
+        let path = root.join(file_name);
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+        let mut targets = HashSet::new();
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('.') || trimmed.starts_with('\t') {
+                continue;
+            }
+            let Some((target, _rest)) = trimmed.split_once(':') else {
+                continue;
+            };
+            let target = target.trim();
+            if !target.is_empty()
+                && target
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+            {
+                targets.insert(target.to_string());
+            }
+        }
+        return targets;
+    }
+
+    HashSet::new()
 }
 
 fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
@@ -857,6 +1175,143 @@ JSON_PAYLOAD={"a":1}
         let targets = detect_workspace_targets(&root);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].relative_path, "apps/web");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn uses_pnpm_for_node_actions_when_package_manager_requires_it() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "vitesse-like",
+              "packageManager": "pnpm@10.30.2",
+              "scripts": {
+                "dev": "vite",
+                "build": "vite build"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let actions = infer_actions(
+            &root,
+            &RuntimeKind::Node,
+            Some(3333),
+            None,
+            "http://gateway.localhost:42300/p/demo/",
+            &[],
+        );
+
+        assert!(actions.iter().any(|action| action.command == "pnpm install"));
+        assert!(actions.iter().any(|action| action.command == "pnpm run dev"));
+        assert!(actions.iter().any(|action| action.command == "pnpm run build"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn uses_bun_for_node_actions_when_bun_lock_is_present() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "bun-like",
+              "workspaces": ["frontend"],
+              "scripts": {
+                "dev": "bun run --filter frontend dev"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(root.join("bun.lock"), "").unwrap();
+
+        let actions = infer_actions(
+            &root,
+            &RuntimeKind::Node,
+            None,
+            None,
+            "http://gateway.localhost:42300/p/demo/",
+            &[],
+        );
+
+        assert!(actions.iter().any(|action| action.command == "bun install"));
+        assert!(actions.iter().any(|action| action.command == "bun run dev"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prefers_make_targets_for_go_repositories() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/demo\n").unwrap();
+        fs::write(
+            root.join("Makefile"),
+            r#"
+install:
+	go install ./...
+
+run:
+	go run cmd/web/main.go
+
+build:
+	go build ./...
+"#,
+        )
+        .unwrap();
+
+        let actions = infer_actions(
+            &root,
+            &RuntimeKind::Go,
+            Some(8000),
+            None,
+            "http://gateway.localhost:42300/p/demo/",
+            &[],
+        );
+
+        assert!(actions.iter().any(|action| action.command == "make install"));
+        assert!(actions.iter().any(|action| action.command == "make run"));
+        assert!(actions.iter().any(|action| action.command == "make build"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_nested_targets_outside_explicit_workspaces() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("backend")).unwrap();
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "mixed-stack",
+              "scripts": {
+                "dev": "bun run --filter frontend dev"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(root.join("bun.lock"), "").unwrap();
+        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("frontend/package.json"),
+            r#"{
+              "name": "frontend",
+              "scripts": {
+                "dev": "vite"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let targets = detect_workspace_targets(&root);
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| target.relative_path == "backend"));
+        assert!(targets.iter().any(|target| target.relative_path == "frontend"));
 
         let _ = fs::remove_dir_all(root);
     }

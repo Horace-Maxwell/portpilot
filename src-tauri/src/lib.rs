@@ -896,10 +896,7 @@ fn merged_env_values(project: &ManagedProject) -> HashMap<String, String> {
 
 fn tooling_check(project: &ManagedProject) -> DoctorCheck {
     let (missing, fix_command) = match project.runtime_kind {
-        RuntimeKind::Node => (
-            missing_binaries(&["node", "npm"]),
-            Some("brew install node".to_string()),
-        ),
+        RuntimeKind::Node => node_tooling_check_requirements(project),
         RuntimeKind::Python => (
             if binary_exists("uv") || binary_exists("python3") || binary_exists("python") {
                 Vec::new()
@@ -941,6 +938,40 @@ fn tooling_check(project: &ManagedProject) -> DoctorCheck {
         fix_label: Some("Suggested fix".to_string()),
         fix_command,
     }
+}
+
+fn node_tooling_check_requirements(project: &ManagedProject) -> (Vec<String>, Option<String>) {
+    let commands = project
+        .actions
+        .iter()
+        .map(|action| action.command.as_str())
+        .collect::<Vec<_>>();
+
+    if commands.iter().any(|command| command.starts_with("bun ")) {
+        return (
+            missing_binaries(&["bun"]),
+            Some("brew install oven-sh/bun/bun".to_string()),
+        );
+    }
+
+    if commands.iter().any(|command| command.starts_with("pnpm ")) {
+        return (
+            missing_binaries(&["node", "pnpm"]),
+            Some("brew install node && corepack enable pnpm".to_string()),
+        );
+    }
+
+    if commands.iter().any(|command| command.starts_with("yarn ")) {
+        return (
+            missing_binaries(&["node", "yarn"]),
+            Some("brew install node && corepack enable yarn".to_string()),
+        );
+    }
+
+    (
+        missing_binaries(&["node", "npm"]),
+        Some("brew install node".to_string()),
+    )
 }
 
 fn env_check(project: &ManagedProject, missing_env_keys: &[String]) -> DoctorCheck {

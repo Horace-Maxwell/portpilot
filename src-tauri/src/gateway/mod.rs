@@ -28,12 +28,7 @@ pub async fn start_gateway(store: Arc<ProjectStore>) -> Result<u16, String> {
         store,
     };
 
-    let app = Router::new()
-        .route("/", any(proxy_root))
-        .route("/p/{slug}", any(proxy_project_root))
-        .route("/p/{slug}/*rest", any(proxy_project_rest))
-        .fallback(any(proxy_host))
-        .with_state(state);
+    let app = build_router(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tauri::async_runtime::spawn(async move {
@@ -43,6 +38,15 @@ pub async fn start_gateway(store: Arc<ProjectStore>) -> Result<u16, String> {
     });
 
     Ok(port)
+}
+
+fn build_router(state: GatewayState) -> Router {
+    Router::new()
+        .route("/", any(proxy_root))
+        .route("/p/{slug}", any(proxy_project_root))
+        .route("/p/{slug}/{*rest}", any(proxy_project_rest))
+        .fallback(any(proxy_host))
+        .with_state(state)
 }
 
 async fn proxy_root() -> Response<Body> {
@@ -184,4 +188,30 @@ fn response_text(status: StatusCode, message: &str) -> Response<Body> {
 
 fn choose_gateway_port(start: u16) -> Option<u16> {
     (start..=start + 20).find(|port| is_free_tcp(*port))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use reqwest::Client;
+    use uuid::Uuid;
+
+    use super::{build_router, GatewayState};
+    use crate::storage::store::ProjectStore;
+
+    #[test]
+    fn builds_gateway_router_without_panicking() {
+        let temp_dir = std::env::temp_dir().join(format!("portpilot-gateway-{}", Uuid::new_v4()));
+        let store = Arc::new(ProjectStore::load(temp_dir.join("store.sqlite")).unwrap());
+        let state = GatewayState {
+            client: Client::new(),
+            store,
+        };
+
+        let router = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_router(state)));
+        assert!(router.is_ok());
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }
