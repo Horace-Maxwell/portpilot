@@ -394,6 +394,17 @@ pub struct LocalServicePreset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EnvGroupPreset {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    #[serde(default)]
+    pub values: HashMap<String, String>,
+    #[serde(default)]
+    pub manual_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecipeTarget {
     pub id: String,

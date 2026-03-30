@@ -29,9 +29,9 @@ use crate::core::inference::{
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
     ComposeRequirement, ComposeServiceStatus, DoctorBlocker, DoctorCheck, DoctorPortConflict,
-    DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, HealthProbeResult, ImportedRepo,
-    LocalServicePreset, LogEntry, ManagedProject, PortLease, ProjectAction, ProjectRecipe,
-    ProjectRecipeTarget, RouteBinding, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus,
+    DoctorReport, DoctorStatus, EnvGroupPreset, EnvProfile, EnvTemplateField, HealthProbeResult,
+    ImportedRepo, LocalServicePreset, LogEntry, ManagedProject, PortLease, ProjectAction,
+    ProjectRecipe, ProjectRecipeTarget, RouteBinding, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus,
     WorkspaceSession, WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
@@ -275,6 +275,18 @@ fn list_runtime_nodes(state: State<'_, AppState>) -> Result<Vec<RuntimeNode>, St
 fn list_local_service_presets(state: State<'_, AppState>) -> Result<Vec<LocalServicePreset>, String> {
     let projects = state.store.list()?;
     Ok(collect_local_service_presets(&projects))
+}
+
+#[tauri::command]
+fn list_env_group_presets(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<EnvGroupPreset>, String> {
+    let project = state
+        .store
+        .get(&project_id)?
+        .ok_or_else(|| "Project not found".to_string())?;
+    Ok(build_env_group_presets(&project))
 }
 
 #[tauri::command]
@@ -1907,6 +1919,236 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
     presets
 }
 
+fn build_env_group_presets(project: &ManagedProject) -> Vec<EnvGroupPreset> {
+    let mut presets = Vec::new();
+    for group in &project.project_profile.required_env_groups {
+        let preset = build_env_group_preset(project, group);
+        if !preset.values.is_empty() || !preset.manual_keys.is_empty() {
+            presets.push(preset);
+        }
+    }
+    presets
+}
+
+fn build_env_group_preset(project: &ManagedProject, group: &str) -> EnvGroupPreset {
+    let group_id = group.to_ascii_lowercase();
+    let project_slug = slugify(&project.name);
+    let project_root = Path::new(&project.root_path);
+    let default_port = project.preferred_port.unwrap_or_else(|| {
+        project
+            .project_profile
+            .known_ports
+            .first()
+            .copied()
+            .unwrap_or(3000)
+    });
+    let mut values = HashMap::new();
+    let mut manual_keys = Vec::new();
+
+    for field in &project.env_template {
+        let key = field.key.as_str();
+        let upper = key.to_ascii_uppercase();
+        let key_matches = match group_id.as_str() {
+            "app" => matches!(
+                upper.as_str(),
+                "PORT" | "HOST" | "APP_URL" | "WEB_URL" | "SERVER_URL" | "API_URL"
+            ),
+            "database" => {
+                upper.contains("MONGO")
+                    || upper.contains("DATABASE")
+                    || upper.contains("POSTGRES")
+                    || upper.contains("PG")
+            }
+            "search" => {
+                upper.contains("MEILI")
+                    || upper.contains("SEARCH")
+                    || upper.contains("QDRANT")
+                    || upper.contains("WEAVIATE")
+                    || upper.contains("CHROMA")
+                    || upper.contains("VECTOR")
+            }
+            "rag" => upper.contains("RAG"),
+            "queue" => upper.contains("REDIS") || upper.contains("QUEUE"),
+            "workspace" => upper.contains("WORKSPACE") || upper.contains("CONFIG_DIR"),
+            "gateway" => upper.contains("GATEWAY") || upper.contains("WEBCHAT"),
+            "credentials" | "model-providers" | "llm-provider" | "models" => {
+                upper.contains("API_KEY")
+                    || upper.contains("TOKEN")
+                    || upper.contains("SECRET")
+                    || upper.contains("MODEL")
+                    || upper.contains("PROVIDER")
+            }
+            "frontend" => upper == "PORT" || upper.contains("FRONTEND") || upper.contains("WEB"),
+            "server" => upper == "PORT" || upper.contains("SERVER") || upper.contains("API"),
+            _ => false,
+        };
+
+        if !key_matches {
+            continue;
+        }
+
+        let suggested = suggested_env_value(project, &group_id, key, default_port, &project_slug, project_root);
+        if let Some(value) = suggested {
+            values.insert(field.key.clone(), value);
+        } else if !manual_keys.iter().any(|item| item == key) {
+            manual_keys.push(field.key.clone());
+        }
+    }
+
+    EnvGroupPreset {
+        id: group_id.clone(),
+        label: env_group_label(&group_id).to_string(),
+        description: env_group_description(&group_id).to_string(),
+        values,
+        manual_keys,
+    }
+}
+
+fn suggested_env_value(
+    project: &ManagedProject,
+    group: &str,
+    key: &str,
+    default_port: u16,
+    project_slug: &str,
+    project_root: &Path,
+) -> Option<String> {
+    let upper = key.to_ascii_uppercase();
+    let localhost = "127.0.0.1";
+    let app_url = format!("http://{localhost}:{default_port}");
+
+    match group {
+        "app" | "frontend" | "server" => match upper.as_str() {
+            "PORT" => Some(default_port.to_string()),
+            "HOST" => Some(localhost.to_string()),
+            "APP_URL" | "WEB_URL" | "SERVER_URL" | "API_URL" => Some(app_url),
+            _ => None,
+        },
+        "database" => {
+            if upper == "MONGO_URI" || upper == "MONGODB_URI" {
+                return Some(format!("mongodb://{localhost}:27017/{project_slug}"));
+            }
+            if upper == "DATABASE_URL" || upper == "POSTGRES_URL" {
+                return Some(format!(
+                    "postgresql://postgres:postgres@{localhost}:5432/{project_slug}"
+                ));
+            }
+            match upper.as_str() {
+                "DATABASE_HOST" | "MONGO_HOST" | "MONGODB_HOST" | "POSTGRES_HOST" => {
+                    Some(localhost.to_string())
+                }
+                "DATABASE_PORT" => Some(if uses_mongo(project) { "27017" } else { "5432" }.to_string()),
+                "DATABASE_NAME" | "POSTGRES_DB" | "MONGO_DB" | "MONGODB_DB" => {
+                    Some(project_slug.to_string())
+                }
+                "DATABASE_USER" | "POSTGRES_USER" => Some("postgres".to_string()),
+                "DATABASE_PASSWORD" | "POSTGRES_PASSWORD" => Some("postgres".to_string()),
+                "DATABASE_TYPE" => Some(if uses_mongo(project) {
+                    "mongodb".to_string()
+                } else {
+                    "postgres".to_string()
+                }),
+                _ => None,
+            }
+        }
+        "search" => match upper.as_str() {
+            "MEILI_MASTER_KEY" => Some("masterkey".to_string()),
+            "MEILI_HOST" | "MEILISEARCH_HOST" | "MEILI_URL" | "MEILISEARCH_URL" => {
+                Some(format!("http://{localhost}:7700"))
+            }
+            "QDRANT_URL" => Some(format!("http://{localhost}:6333")),
+            "WEAVIATE_URL" => Some(format!("http://{localhost}:8080")),
+            "CHROMA_URL" | "VECTOR_DB_URL" => Some(format!("http://{localhost}:8000")),
+            _ => None,
+        },
+        "rag" => match upper.as_str() {
+            "RAG_PORT" => Some("8001".to_string()),
+            "RAG_API_URL" | "RAG_URL" => Some(format!("http://{localhost}:8001")),
+            _ => None,
+        },
+        "queue" => match upper.as_str() {
+            "REDIS_URL" => Some(format!("redis://{localhost}:6379")),
+            "REDIS_HOST" => Some(localhost.to_string()),
+            "REDIS_PORT" => Some("6379".to_string()),
+            "QUEUE_NAME" => Some(format!("{project_slug}-jobs")),
+            _ => None,
+        },
+        "workspace" => match upper.as_str() {
+            "OPENCLAW_CONFIG_DIR" => Some(
+                project_root
+                    .join(".portpilot")
+                    .join("openclaw-config")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            "OPENCLAW_WORKSPACE_DIR" => Some(
+                project_root
+                    .join(".portpilot")
+                    .join("openclaw-workspace")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            _ => None,
+        },
+        "gateway" => match upper.as_str() {
+            "OPENCLAW_GATEWAY_PORT" => Some("18789".to_string()),
+            "OPENCLAW_WEBCHAT_PORT" => Some("18790".to_string()),
+            "OPENCLAW_GATEWAY_URL" => Some("http://127.0.0.1:18789".to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn uses_mongo(project: &ManagedProject) -> bool {
+    project
+        .project_profile
+        .required_services
+        .iter()
+        .any(|service| service.eq_ignore_ascii_case("mongodb"))
+        || project.env_template.iter().any(|field| {
+            let upper = field.key.to_ascii_uppercase();
+            upper.contains("MONGO")
+        })
+}
+
+fn env_group_label(group: &str) -> &'static str {
+    match group {
+        "app" => "App",
+        "database" => "Database",
+        "search" => "Search",
+        "rag" => "RAG",
+        "queue" => "Queue",
+        "workspace" => "Workspace",
+        "gateway" => "Gateway",
+        "credentials" => "Credentials",
+        "model-providers" => "Model Providers",
+        "llm-provider" => "LLM Provider",
+        "models" => "Models",
+        "frontend" => "Frontend",
+        "server" => "Server",
+        _ => "Environment",
+    }
+}
+
+fn env_group_description(group: &str) -> &'static str {
+    match group {
+        "app" => "Good local defaults for the primary app URL and port.",
+        "database" => "Fill the most common localhost database values for this stack.",
+        "search" => "Preset local search or vector service endpoints.",
+        "rag" => "Preset the local RAG sidecar URL and port.",
+        "queue" => "Preset the local queue/cache service values.",
+        "workspace" => "Set repo-local working directories required by this stack.",
+        "gateway" => "Preset localhost gateway and webchat entrypoints.",
+        "credentials" => "Keys in this group usually still need real secrets.",
+        "model-providers" => "Provider keys usually need manual input even in local mode.",
+        "llm-provider" => "Provider-specific credentials still need manual input.",
+        "models" => "Model paths and provider tokens often need manual input.",
+        "frontend" => "Preset the local frontend URL and port.",
+        "server" => "Preset the local server URL and port.",
+        _ => "Local development defaults for this environment group.",
+    }
+}
+
 fn local_service_start_command(service_name: &str) -> Option<&'static str> {
     match service_name.to_ascii_lowercase().as_str() {
         "ollama" => Some("ollama serve"),
@@ -2065,8 +2307,8 @@ fn fixed_port_from_project_config(project: &ManagedProject) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_compose_requirements, collect_local_service_presets, fixed_port_from_command,
-        fixed_port_from_project_config, infer_run_phase,
+        build_compose_requirements, build_env_group_presets, collect_local_service_presets,
+        fixed_port_from_command, fixed_port_from_project_config, infer_run_phase,
         known_local_service_hint, known_local_service_port, local_service_start_command, now_iso,
         parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
     };
@@ -2281,6 +2523,149 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_workspace_env_group_preset_for_openclaw() {
+        let root = std::env::temp_dir().join(format!("portpilot-openclaw-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "OpenClaw".to_string(),
+            slug: "openclaw".to_string(),
+            root_path: root.to_string_lossy().to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(18789),
+            resolved_port: None,
+            route_subdomain_url: String::new(),
+            route_path_url: String::new(),
+            has_docker_compose: true,
+            has_dockerfile: false,
+            detected_files: vec!["docker-compose.yml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::GatewayStack,
+                preferred_entrypoint: None,
+                required_services: vec!["openclaw-gateway".to_string()],
+                required_env_groups: vec!["workspace".to_string(), "gateway".to_string(), "credentials".to_string()],
+                known_ports: vec![18789, 18790],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: vec![
+                EnvTemplateField {
+                    key: "OPENCLAW_CONFIG_DIR".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "OPENCLAW_WORKSPACE_DIR".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "OPENAI_API_KEY".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Secret,
+                },
+            ],
+            env_profile: EnvProfile::default(),
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let presets = build_env_group_presets(&project);
+        let workspace = presets.iter().find(|preset| preset.id == "workspace").unwrap();
+        assert!(workspace.values.contains_key("OPENCLAW_CONFIG_DIR"));
+        assert!(workspace.values.contains_key("OPENCLAW_WORKSPACE_DIR"));
+
+        let credentials = presets.iter().find(|preset| preset.id == "credentials").unwrap();
+        assert_eq!(credentials.manual_keys, vec!["OPENAI_API_KEY".to_string()]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn builds_database_and_search_presets_for_librechat() {
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "LibreChat".to_string(),
+            slug: "librechat".to_string(),
+            root_path: "/tmp/librechat".to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Compose,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(3080),
+            resolved_port: None,
+            route_subdomain_url: String::new(),
+            route_path_url: String::new(),
+            has_docker_compose: true,
+            has_dockerfile: false,
+            detected_files: vec!["docker-compose.yml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::GatewayStack,
+                preferred_entrypoint: None,
+                required_services: vec!["mongodb".to_string(), "meilisearch".to_string(), "rag_api".to_string()],
+                required_env_groups: vec!["database".to_string(), "search".to_string(), "rag".to_string()],
+                known_ports: vec![3080, 8000],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: vec![
+                EnvTemplateField {
+                    key: "MONGO_URI".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "MEILI_MASTER_KEY".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Secret,
+                },
+                EnvTemplateField {
+                    key: "RAG_PORT".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+            ],
+            env_profile: EnvProfile::default(),
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let presets = build_env_group_presets(&project);
+        let database = presets.iter().find(|preset| preset.id == "database").unwrap();
+        assert_eq!(
+            database.values.get("MONGO_URI").map(String::as_str),
+            Some("mongodb://127.0.0.1:27017/librechat")
+        );
+        let search = presets.iter().find(|preset| preset.id == "search").unwrap();
+        assert_eq!(
+            search.values.get("MEILI_MASTER_KEY").map(String::as_str),
+            Some("masterkey")
+        );
+        let rag = presets.iter().find(|preset| preset.id == "rag").unwrap();
+        assert_eq!(rag.values.get("RAG_PORT").map(String::as_str), Some("8001"));
     }
 
     #[test]
@@ -2831,6 +3216,7 @@ pub fn run() {
             list_project_actions,
             get_env_template,
             get_doctor_report,
+            list_env_group_presets,
             get_project_recipe,
             write_project_recipe,
             save_env_profile,

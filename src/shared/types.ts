@@ -267,6 +267,14 @@ export interface LocalServicePreset {
   used_by_projects: string[];
 }
 
+export interface EnvGroupPreset {
+  id: string;
+  label: string;
+  description: string;
+  values: Record<string, string>;
+  manual_keys: string[];
+}
+
 export interface ProjectRecipeTarget {
   id: string;
   relative_path: string;

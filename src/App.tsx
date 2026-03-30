@@ -11,6 +11,7 @@ import type {
   BatchActionResult,
   ComposeRequirement,
   DoctorReport,
+  EnvGroupPreset,
   ImportedRepo,
   LocalServicePreset,
   LogEntry,
@@ -62,6 +63,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [runtimeNodes, setRuntimeNodes] = useState<RuntimeNode[]>([]);
   const [localServicePresets, setLocalServicePresets] = useState<LocalServicePreset[]>([]);
+  const [envGroupPresets, setEnvGroupPresets] = useState<EnvGroupPreset[]>([]);
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
   const [doctorReports, setDoctorReports] = useState<Record<string, DoctorReport>>({});
@@ -202,6 +204,7 @@ export default function App() {
     if (!selectedProject) {
       setEnvValues({});
       setEnvRawText("");
+      setEnvGroupPresets([]);
       return;
     }
 
@@ -215,6 +218,18 @@ export default function App() {
     }
     setEnvValues(nextValues);
     setEnvRawText(selectedProject.env_profile.raw_editor_text ?? "");
+  }, [selectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setEnvGroupPresets([]);
+      return;
+    }
+
+    void api
+      .listEnvGroupPresets(selectedProject.id)
+      .then(setEnvGroupPresets)
+      .catch(() => setEnvGroupPresets([]));
   }, [selectedProject]);
 
   useEffect(() => {
@@ -493,6 +508,25 @@ export default function App() {
       locale === "zh-CN"
         ? `已复制 ${service.label} 的启动命令。`
         : `Copied start command for ${service.label}.`,
+    );
+  }
+
+  function handleApplyEnvGroupPreset(preset: EnvGroupPreset) {
+    let appliedCount = 0;
+    setEnvValues((current) => {
+      const next = { ...current };
+      for (const [key, value] of Object.entries(preset.values)) {
+        if (!next[key]?.trim()) {
+          next[key] = value;
+          appliedCount += 1;
+        }
+      }
+      return next;
+    });
+    setStatusMessage(
+      locale === "zh-CN"
+        ? `已为 ${localizeEnvGroupLabel(preset.label, locale)} 预填 ${appliedCount} 个本地默认值。`
+        : `Filled ${appliedCount} local default value(s) for ${preset.label}.`,
     );
   }
 
@@ -1192,6 +1226,36 @@ export default function App() {
                     <section className="subpanel">
                       <h4>{t("Environment", "环境变量")}</h4>
                       <div id="env-editor" />
+                      {envGroupPresets.length > 0 && (
+                        <div className="env-preset-grid">
+                          {envGroupPresets.map((preset) => (
+                            <article key={preset.id} className="env-preset-card">
+                              <div className="doctor-card__top">
+                                <strong>{localizeEnvGroupLabel(preset.label, locale)}</strong>
+                                <span className="status-pill status-pill--doctor-warn">
+                                  {Object.keys(preset.values).length} {t("defaults", "默认值")}
+                                </span>
+                              </div>
+                              <p>{localizeEnvGroupDescription(preset.description, locale)}</p>
+                              {Object.keys(preset.values).length > 0 && (
+                                <small>{Object.keys(preset.values).join(" • ")}</small>
+                              )}
+                              {preset.manual_keys.length > 0 && (
+                                <small>
+                                  {t("Still manual", "仍需手动填写")}: {preset.manual_keys.join(" • ")}
+                                </small>
+                              )}
+                              <button
+                                className="ghost-button"
+                                onClick={() => handleApplyEnvGroupPreset(preset)}
+                                type="button"
+                              >
+                                {t("Apply Local Defaults", "填入本地默认值")}
+                              </button>
+                            </article>
+                          ))}
+                        </div>
+                      )}
                       {selectedProject.env_template.length > 0 ? (
                         <div className="env-grid">
                           {selectedProject.env_template.map((field) => (
@@ -2135,6 +2199,52 @@ function localizeDoctorLabel(label: string, locale: Locale) {
     "Local Services": "本地服务",
   };
   return labels[label] ?? label;
+}
+
+function localizeEnvGroupLabel(label: string, locale: Locale) {
+  if (locale !== "zh-CN") {
+    return label;
+  }
+  const labels: Record<string, string> = {
+    App: "应用",
+    Database: "数据库",
+    Search: "搜索",
+    RAG: "RAG",
+    Queue: "队列",
+    Workspace: "工作区",
+    Gateway: "网关",
+    Credentials: "凭据",
+    "Model Providers": "模型提供商",
+    "LLM Provider": "LLM 提供商",
+    Models: "模型",
+    Frontend: "前端",
+    Server: "服务端",
+    Environment: "环境",
+  };
+  return labels[label] ?? label;
+}
+
+function localizeEnvGroupDescription(description: string, locale: Locale) {
+  if (locale !== "zh-CN") {
+    return description;
+  }
+  const labels: Record<string, string> = {
+    "Good local defaults for the primary app URL and port.": "为主应用的 URL 和端口填入常见本地默认值。",
+    "Fill the most common localhost database values for this stack.": "为这个栈填入最常见的本地数据库默认值。",
+    "Preset local search or vector service endpoints.": "预填本地搜索或向量服务地址。",
+    "Preset the local RAG sidecar URL and port.": "预填本地 RAG 辅助服务的 URL 和端口。",
+    "Preset the local queue/cache service values.": "预填本地队列或缓存服务值。",
+    "Set repo-local working directories required by this stack.": "设置这个栈要求的仓库内工作目录。",
+    "Preset localhost gateway and webchat entrypoints.": "预填 localhost 网关和 WebChat 入口。",
+    "Keys in this group usually still need real secrets.": "这组键通常仍然需要真实密钥。",
+    "Provider keys usually need manual input even in local mode.": "即使是本地模式，这组提供商密钥通常也需要手动填写。",
+    "Provider-specific credentials still need manual input.": "提供商相关凭据仍然需要手动填写。",
+    "Model paths and provider tokens often need manual input.": "模型路径和提供商 token 通常仍需手动填写。",
+    "Preset the local frontend URL and port.": "预填本地前端 URL 和端口。",
+    "Preset the local server URL and port.": "预填本地服务端 URL 和端口。",
+    "Local development defaults for this environment group.": "这组环境变量的本地开发默认值。",
+  };
+  return labels[description] ?? description;
 }
 
 function localizeExecutionStatus(

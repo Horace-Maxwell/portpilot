@@ -3,6 +3,7 @@ import type {
   ActionExecution,
   BatchActionResult,
   DoctorReport,
+  EnvGroupPreset,
   EnvTemplateField,
   ImportedRepo,
   LogEntry,
@@ -32,6 +33,8 @@ export const api = {
     invoke<EnvTemplateField[]>("get_env_template", { projectId }),
   getDoctorReport: (projectId: string) =>
     invoke<DoctorReport>("get_doctor_report", { projectId }),
+  listEnvGroupPresets: (projectId: string) =>
+    invoke<EnvGroupPreset[]>("list_env_group_presets", { projectId }),
   getProjectRecipe: (projectId: string) =>
     invoke<ProjectRecipe>("get_project_recipe", { projectId }),
   writeProjectRecipe: (projectId: string) =>

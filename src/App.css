@@ -490,6 +490,29 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.env-preset-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.env-preset-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem 0.95rem;
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(41, 73, 119, 0.16), rgba(15, 27, 53, 0.26));
+  border: 1px solid rgba(111, 152, 220, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.env-preset-card p,
+.env-preset-card small {
+  margin: 0;
+  color: #a9bdd7;
+}
+
 .action-line {
   display: flex;
   align-items: flex-start;
