@@ -110,9 +110,10 @@ PortPilot is available now as a public GitHub beta release.
 - P1: deeper Docker / Compose orchestration with one unified runtime surface
 - P2: shareable project recipes, preview tunnels, and extensible stack-specific inference
 
-See the full prioritized roadmap in [docs/product-roadmap.md](./docs/product-roadmap.md).
-The implementation breakdown lives in [docs/execution-plan.md](./docs/execution-plan.md), and the stable release checklist lives in [docs/release-runbook.md](./docs/release-runbook.md).
-The source-backed product research lives in [docs/competitive-research.md](./docs/competitive-research.md).
+Already landing in the app:
+- first-run setup checklist with install / env / run / open guidance
+- Doctor checks for tooling, env gaps, install state, routes, and port readiness
+- monorepo target detection for workspace-based Node repos
 
 ## Development
 

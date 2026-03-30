@@ -82,6 +82,10 @@ pub struct ImportedRepo {
     pub has_dockerfile: bool,
     pub detected_files: Vec<String>,
     pub action_count: usize,
+    #[serde(default)]
+    pub workspace_target_count: usize,
+    #[serde(default)]
+    pub readme_hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,11 +133,59 @@ pub struct ManagedProject {
     pub has_docker_compose: bool,
     pub has_dockerfile: bool,
     pub detected_files: Vec<String>,
+    #[serde(default)]
+    pub workspace_targets: Vec<DetectedAppTarget>,
+    #[serde(default)]
+    pub readme_hints: Vec<String>,
     pub env_template: Vec<EnvTemplateField>,
     pub env_profile: EnvProfile,
     pub actions: Vec<ProjectAction>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedAppTarget {
+    pub id: String,
+    pub name: String,
+    pub relative_path: String,
+    pub root_path: String,
+    pub runtime_kind: RuntimeKind,
+    pub suggested_port: Option<u16>,
+    #[serde(default)]
+    pub available_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DoctorStatus {
+    Ok,
+    Warn,
+    Error,
+    Info,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    pub id: String,
+    pub label: String,
+    pub status: DoctorStatus,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub fix_label: Option<String>,
+    pub fix_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    pub project_id: String,
+    pub generated_at: String,
+    #[serde(default)]
+    pub missing_env_keys: Vec<String>,
+    pub install_action_id: Option<String>,
+    pub run_action_id: Option<String>,
+    pub open_action_id: Option<String>,
+    pub checks: Vec<DoctorCheck>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,8 +9,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::core::models::{
-    ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField, ImportedRepo,
-    ManagedProject, ProjectAction, ProjectKind, RuntimeKind, RuntimeStatus,
+    ActionKind, ActionSource, DetectedAppTarget, EnvFieldType, EnvProfile, EnvTemplateField,
+    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, RuntimeKind, RuntimeStatus,
 };
 
 pub const DEFAULT_WORKSPACE_ROOT: &str = "/Users/horacedong/Desktop/Github";
@@ -183,6 +183,8 @@ pub fn scan_workspace_roots(roots: &[String], gateway_port: u16) -> Vec<Imported
                     has_dockerfile: project.has_dockerfile,
                     detected_files: project.detected_files,
                     action_count: project.actions.len(),
+                    workspace_target_count: project.workspace_targets.len(),
+                    readme_hints: project.readme_hints,
                 });
             }
         }
@@ -259,6 +261,8 @@ pub fn infer_project_from_path(
     let slug = slugify(&name);
     let preferred_port = infer_port_hint(root, compose_file.as_deref());
     let env_template = parse_env_template(root);
+    let workspace_targets = detect_workspace_targets(root);
+    let readme_hints = infer_readme_hints(root);
     let route_subdomain_url = format!("http://{}.localhost:{}", slug, gateway_port);
     let route_path_url = format!("http://gateway.localhost:{}/p/{}/", gateway_port, slug);
     let actions = infer_actions(
@@ -267,6 +271,7 @@ pub fn infer_project_from_path(
         preferred_port,
         compose_file.as_deref(),
         &route_path_url,
+        &workspace_targets,
     );
 
     let timestamp = now_iso();
@@ -288,6 +293,8 @@ pub fn infer_project_from_path(
         has_docker_compose: compose_file.is_some(),
         has_dockerfile: dockerfile.exists(),
         detected_files,
+        workspace_targets,
+        readme_hints,
         env_template,
         env_profile: EnvProfile::default(),
         actions,
@@ -302,6 +309,7 @@ pub fn infer_actions(
     port_hint: Option<u16>,
     compose_file: Option<&Path>,
     route_path_url: &str,
+    workspace_targets: &[DetectedAppTarget],
 ) -> Vec<ProjectAction> {
     let mut actions = Vec::new();
     let workdir = root.to_string_lossy().to_string();
@@ -356,6 +364,42 @@ pub fn infer_actions(
                     None,
                     ActionSource::Inferred,
                 ));
+            }
+        }
+
+        for target in workspace_targets {
+            let target_root = Path::new(&target.root_path);
+            let Some(target_scripts) = read_package_scripts(target_root) else {
+                continue;
+            };
+
+            for (script, label) in [("dev", "Run"), ("start", "Start"), ("preview", "Preview")] {
+                if target_scripts.contains_key(script) {
+                    actions.push(action(
+                        &format!("workspace-{}-{script}", target.id),
+                        &format!("{label} {}", target.name),
+                        ActionKind::Run,
+                        &format!("npm run {script}"),
+                        &target.root_path,
+                        target.suggested_port,
+                        ActionSource::Inferred,
+                    ));
+                }
+            }
+
+            for script in target_scripts.keys() {
+                if is_build_script(script) {
+                    actions.push(action(
+                        &format!("workspace-{}-build-{script}", target.id),
+                        &format!("Build {}", target.name),
+                        ActionKind::Build,
+                        &format!("npm run {script}"),
+                        &target.root_path,
+                        None,
+                        ActionSource::Inferred,
+                    ));
+                    break;
+                }
             }
         }
     } else {
@@ -423,6 +467,107 @@ pub fn infer_actions(
     ));
 
     actions
+}
+
+fn detect_workspace_targets(root: &Path) -> Vec<DetectedAppTarget> {
+    let mut output = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let mut patterns = read_package_workspaces(root);
+    patterns.extend(read_pnpm_workspace_patterns(root));
+
+    for pattern in patterns {
+        for target_root in expand_workspace_pattern(root, &pattern) {
+            if !seen_paths.insert(target_root.clone()) {
+                continue;
+            }
+
+            let target_path = Path::new(&target_root);
+            if !target_path.join("package.json").exists() {
+                continue;
+            }
+
+            let scripts = read_package_scripts(target_path).unwrap_or_default();
+            if scripts.is_empty() {
+                continue;
+            }
+
+            let Some(relative_path) = target_path
+                .strip_prefix(root)
+                .ok()
+                .map(|value| value.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+
+            let name = read_package_name(target_path)
+                .or_else(|| {
+                    target_path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .map(ToString::to_string)
+                })
+                .unwrap_or_else(|| relative_path.clone());
+
+            let available_actions = scripts
+                .keys()
+                .filter(|script| {
+                    matches!(script.as_str(), "dev" | "start" | "preview")
+                        || is_build_script(script)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            output.push(DetectedAppTarget {
+                id: slugify(&relative_path),
+                name,
+                relative_path,
+                root_path: target_root.clone(),
+                runtime_kind: RuntimeKind::Node,
+                suggested_port: infer_port_hint(target_path, None),
+                available_actions,
+            });
+        }
+    }
+
+    output.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    output
+}
+
+fn infer_readme_hints(root: &Path) -> Vec<String> {
+    let readme = root.join("README.md");
+    if !readme.exists() {
+        return Vec::new();
+    }
+
+    let Ok(contents) = fs::read_to_string(readme) else {
+        return Vec::new();
+    };
+
+    let patterns = [
+        Regex::new(r"`(npm (?:install|run [\w:-]+))`").expect("regex"),
+        Regex::new(r"`(pnpm (?:install|dev|run [\w:-]+))`").expect("regex"),
+        Regex::new(r"`(yarn(?:\s+[\w:-]+)?)`").expect("regex"),
+        Regex::new(r"`(docker compose [^`]+)`").expect("regex"),
+        Regex::new(r"`(python -m [^`]+)`").expect("regex"),
+    ];
+
+    let mut hints = Vec::new();
+    let mut seen = HashSet::new();
+    for pattern in patterns {
+        for capture in pattern.captures_iter(&contents) {
+            let Some(command) = capture.get(1).map(|value| value.as_str().trim().to_string()) else {
+                continue;
+            };
+            if seen.insert(command.clone()) {
+                hints.push(command);
+            }
+            if hints.len() == 4 {
+                return hints;
+            }
+        }
+    }
+
+    hints
 }
 
 fn action(
@@ -499,6 +644,93 @@ fn read_package_scripts(root: &Path) -> Option<BTreeMap<String, String>> {
     Some(output)
 }
 
+fn read_package_name(root: &Path) -> Option<String> {
+    let contents = fs::read_to_string(root.join("package.json")).ok()?;
+    let value: Value = serde_json::from_str(&contents).ok()?;
+    value.get("name")?.as_str().map(ToString::to_string)
+}
+
+fn read_package_workspaces(root: &Path) -> Vec<String> {
+    let contents = match fs::read_to_string(root.join("package.json")) {
+        Ok(contents) => contents,
+        Err(_) => return Vec::new(),
+    };
+    let value: Value = match serde_json::from_str(&contents) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+
+    if let Some(workspaces) = value.get("workspaces") {
+        if let Some(items) = workspaces.as_array() {
+            return items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect();
+        }
+
+        if let Some(packages) = workspaces.get("packages").and_then(Value::as_array) {
+            return packages
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect();
+        }
+    }
+
+    Vec::new()
+}
+
+fn read_pnpm_workspace_patterns(root: &Path) -> Vec<String> {
+    let path = root.join("pnpm-workspace.yaml");
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    let mut output = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('-') {
+            continue;
+        }
+        let pattern = trimmed
+            .trim_start_matches('-')
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
+        if !pattern.is_empty() {
+            output.push(pattern.to_string());
+        }
+    }
+    output
+}
+
+fn expand_workspace_pattern(root: &Path, pattern: &str) -> Vec<String> {
+    let normalized = pattern.trim().trim_start_matches("./");
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+
+    if !normalized.contains('*') {
+        let path = root.join(normalized);
+        if path.exists() && path.is_dir() {
+            return vec![path.to_string_lossy().to_string()];
+        }
+        return Vec::new();
+    }
+
+    let prefix = normalized.split('*').next().unwrap_or_default().trim_end_matches('/');
+    let base = root.join(prefix);
+    let Ok(entries) = fs::read_dir(base) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .map(|path| path.to_string_lossy().to_string())
+        .collect()
+}
+
 fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
     let patterns = [
         Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
@@ -556,9 +788,11 @@ fn is_deploy_script(script: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_actions, parse_env_template_contents, repo_name_from_git_url};
+    use super::{
+        detect_workspace_targets, infer_actions, parse_env_template_contents, repo_name_from_git_url,
+    };
     use crate::core::models::{ActionKind, RuntimeKind};
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     #[test]
     fn parses_repo_name_from_git_url() {
@@ -589,9 +823,41 @@ JSON_PAYLOAD={"a":1}
             Some(3117),
             Some(Path::new("docker-compose.yml")),
             "http://gateway.localhost:42300/p/crucix/",
+            &[],
         );
         assert!(actions.iter().any(|action| {
             action.kind == ActionKind::Run && action.command.contains("docker-compose up -d")
         }));
+    }
+
+    #[test]
+    fn detects_workspace_targets_from_package_workspaces() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("apps/web")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "root",
+              "workspaces": ["apps/*"]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("apps/web/package.json"),
+            r#"{
+              "name": "@demo/web",
+              "scripts": {
+                "dev": "vite",
+                "build": "vite build"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let targets = detect_workspace_targets(&root);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].relative_path, "apps/web");
+
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -8,6 +8,7 @@ import { getCurrentVersion } from "./lib/updater";
 import type {
   ActionExecution,
   ActionKind,
+  DoctorReport,
   ImportedRepo,
   LogEntry,
   ManagedProject,
@@ -44,6 +45,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
+  const [doctorReports, setDoctorReports] = useState<Record<string, DoctorReport>>({});
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("https://github.com/calesthio/Crucix.git");
@@ -152,6 +154,24 @@ export default function App() {
   }, [selectedProject]);
 
   useEffect(() => {
+    if (!selectedProject) {
+      return;
+    }
+
+    void api
+      .getDoctorReport(selectedProject.id)
+      .then((report) => {
+        setDoctorReports((current) => ({
+          ...current,
+          [selectedProject.id]: report,
+        }));
+      })
+      .catch((error) => {
+        setStatusMessage(error instanceof Error ? error.message : String(error));
+      });
+  }, [selectedProject?.id, selectedProject?.updated_at]);
+
+  useEffect(() => {
     void getCurrentVersion().then((value) => {
       if (value) {
         setCurrentVersion(value);
@@ -160,6 +180,7 @@ export default function App() {
   }, []);
 
   const runningProjects = projects.filter((project) => project.status === "running").length;
+  const selectedDoctorReport = selectedProject ? doctorReports[selectedProject.id] ?? null : null;
 
   async function refreshAll() {
     const [roots, nextProjects, nextExecutions, nextLogs, nextPorts, nextRoutes] =
@@ -512,10 +533,18 @@ export default function App() {
                     <div>
                       <h4>{candidate.name}</h4>
                       <p>{candidate.root_path}</p>
+                      {candidate.readme_hints[0] && (
+                        <p className="candidate-card__hint">README hint: {candidate.readme_hints[0]}</p>
+                      )}
                     </div>
                     <div className="candidate-card__meta">
                       <span>{candidate.runtime_kind}</span>
                       <span>port {candidate.suggested_port ?? "?"}</span>
+                      {candidate.workspace_target_count > 0 && (
+                        <span>{candidate.workspace_target_count} app targets</span>
+                      )}
+                      {candidate.has_env_template && <span>.env template</span>}
+                      {candidate.has_docker_compose && <span>compose</span>}
                     </div>
                     <button className="primary-button" onClick={() => void handleRegisterCandidate(candidate)} type="button">
                       Register
@@ -593,6 +622,62 @@ export default function App() {
                       <Definition label="Subdomain" value={selectedProject.route_subdomain_url} />
                       <Definition label="Path Route" value={selectedProject.route_path_url} />
                       <Definition label="Detected" value={selectedProject.detected_files.join(", ")} />
+                      <Definition
+                        label="App Targets"
+                        value={
+                          selectedProject.workspace_targets.length > 0
+                            ? String(selectedProject.workspace_targets.length)
+                            : "Single app"
+                        }
+                      />
+                      {selectedProject.readme_hints.length > 0 && (
+                        <Definition
+                          label="README Hints"
+                          value={selectedProject.readme_hints.slice(0, 2).join(" • ")}
+                        />
+                      )}
+                    </section>
+
+                    <section className="subpanel">
+                      <h4>Setup / Doctor</h4>
+                      {selectedDoctorReport ? (
+                        <>
+                          <SetupWizard
+                            project={selectedProject}
+                            report={selectedDoctorReport}
+                            onInstall={() => {
+                              const action = selectedProject.actions.find(
+                                (item) => item.id === selectedDoctorReport.install_action_id,
+                              );
+                              if (action) {
+                                void handleRunAction(selectedProject, action);
+                              }
+                            }}
+                            onRun={() => {
+                              const action = selectedProject.actions.find(
+                                (item) => item.id === selectedDoctorReport.run_action_id,
+                              );
+                              if (action) {
+                                void handleRunAction(selectedProject, action);
+                              }
+                            }}
+                            onOpen={() => {
+                              setEmbedUrl(selectedProject.route_path_url);
+                              void openUrl(selectedProject.route_path_url);
+                            }}
+                            onFocusEnv={() => {
+                              const envSection = document.getElementById("env-editor");
+                              envSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                          />
+                          <DoctorChecks checks={selectedDoctorReport.checks} />
+                        </>
+                      ) : (
+                        <EmptyState
+                          title="Building doctor report"
+                          description="PortPilot is checking tooling, env readiness, ports, and monorepo targets."
+                        />
+                      )}
                     </section>
 
                     <section className="subpanel">
@@ -621,6 +706,7 @@ export default function App() {
 
                     <section className="subpanel">
                       <h4>Environment</h4>
+                      <div id="env-editor" />
                       {selectedProject.env_template.length > 0 ? (
                         <div className="env-grid">
                           {selectedProject.env_template.map((field) => (
@@ -696,6 +782,29 @@ export default function App() {
                         )}
                       </div>
                     </section>
+
+                    {selectedProject.workspace_targets.length > 0 && (
+                      <section className="subpanel subpanel--full">
+                        <h4>Detected App Targets</h4>
+                        <div className="target-grid">
+                          {selectedProject.workspace_targets.map((target) => (
+                            <article key={target.id} className="target-card">
+                              <strong>{target.name}</strong>
+                              <p>{target.relative_path}</p>
+                              <div className="target-card__meta">
+                                <span>{target.runtime_kind}</span>
+                                <span>port {target.suggested_port ?? "?"}</span>
+                              </div>
+                              <div className="target-card__meta">
+                                {target.available_actions.map((action) => (
+                                  <span key={`${target.id}-${action}`}>{action}</span>
+                                ))}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                   </div>
                 </>
               ) : (
@@ -948,6 +1057,111 @@ function DataTable(props: { headers: string[]; rows: string[][] }) {
       {props.rows.length === 0 && (
         <EmptyState title="No data yet" description="Run some projects and PortPilot will populate this view." />
       )}
+    </div>
+  );
+}
+
+function SetupWizard(props: {
+  project: ManagedProject;
+  report: DoctorReport;
+  onInstall: () => void;
+  onRun: () => void;
+  onOpen: () => void;
+  onFocusEnv: () => void;
+}) {
+  const installState = props.report.checks.find((check) => check.id === "install-state");
+  const envReady = props.report.missing_env_keys.length === 0;
+  const runReady = props.project.status === "running";
+  const wizardSteps = [
+    {
+      id: "clone",
+      label: "Project imported",
+      status: "done",
+      description: "This repo is already managed by PortPilot.",
+      action: null,
+    },
+    {
+      id: "install",
+      label: "Install dependencies",
+      status:
+        props.report.install_action_id == null || installState?.status === "ok" ? "done" : "todo",
+      description:
+        installState?.summary ?? "PortPilot inferred an install action for this repository.",
+      action:
+        props.report.install_action_id != null && installState?.status !== "ok"
+          ? { label: "Run install", onClick: props.onInstall }
+          : null,
+    },
+    {
+      id: "env",
+      label: "Fill environment",
+      status: envReady ? "done" : "todo",
+      description: envReady
+        ? "Environment values look ready for the detected template."
+        : `Missing ${props.report.missing_env_keys.length} value(s): ${props.report.missing_env_keys.join(", ")}`,
+      action: envReady ? null : { label: "Open env editor", onClick: props.onFocusEnv },
+    },
+    {
+      id: "run",
+      label: "Start the app",
+      status: runReady ? "done" : "todo",
+      description: runReady
+        ? "The primary run action is live."
+        : "Use the inferred primary run action once dependencies and env values are ready.",
+      action:
+        !runReady && props.report.run_action_id != null
+          ? { label: "Run primary action", onClick: props.onRun }
+          : null,
+    },
+    {
+      id: "open",
+      label: "Open routed preview",
+      status: runReady ? "ready" : "todo",
+      description: runReady
+        ? "Open the unified PortPilot route in the browser or embedded preview."
+        : "The preview becomes useful after the run action starts responding.",
+      action: runReady ? { label: "Open route", onClick: props.onOpen } : null,
+    },
+  ] as const;
+
+  return (
+    <div className="wizard">
+      {wizardSteps.map((step, index) => (
+        <article key={step.id} className={`wizard-step wizard-step--${step.status}`}>
+          <div className="wizard-step__index">{index + 1}</div>
+          <div className="wizard-step__body">
+            <strong>{step.label}</strong>
+            <p>{step.description}</p>
+          </div>
+          {step.action && (
+            <button className="ghost-button" onClick={step.action.onClick} type="button">
+              {step.action.label}
+            </button>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function DoctorChecks(props: { checks: DoctorReport["checks"] }) {
+  return (
+    <div className="doctor-list">
+      {props.checks.map((check) => (
+        <article key={check.id} className={`doctor-card doctor-card--${check.status}`}>
+          <div className="doctor-card__top">
+            <strong>{check.label}</strong>
+            <span className={`status-pill status-pill--doctor-${check.status}`}>{check.status}</span>
+          </div>
+          <p>{check.summary}</p>
+          {check.detail && <small>{check.detail}</small>}
+          {check.fix_label && check.fix_command && (
+            <code>
+              {check.fix_label}: {check.fix_command}
+            </code>
+          )}
+        </article>
+      ))}
     </div>
   );
 }

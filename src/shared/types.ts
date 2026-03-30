@@ -19,6 +19,7 @@ export type ActionKind =
 export type ActionSource = "inferred" | "user_defined";
 export type EnvFieldType = "text" | "secret" | "boolean" | "multiline";
 export type ExecutionStatus = "running" | "success" | "failed" | "stopped";
+export type DoctorStatus = "ok" | "warn" | "error" | "info";
 
 export interface ImportedRepo {
   name: string;
@@ -32,6 +33,8 @@ export interface ImportedRepo {
   has_dockerfile: boolean;
   detected_files: string[];
   action_count: number;
+  workspace_target_count: number;
+  readme_hints: string[];
 }
 
 export interface EnvTemplateField {
@@ -75,11 +78,43 @@ export interface ManagedProject {
   has_docker_compose: boolean;
   has_dockerfile: boolean;
   detected_files: string[];
+  workspace_targets: DetectedAppTarget[];
+  readme_hints: string[];
   env_template: EnvTemplateField[];
   env_profile: EnvProfile;
   actions: ProjectAction[];
   created_at: string;
   updated_at: string;
+}
+
+export interface DetectedAppTarget {
+  id: string;
+  name: string;
+  relative_path: string;
+  root_path: string;
+  runtime_kind: RuntimeKind;
+  suggested_port: number | null;
+  available_actions: string[];
+}
+
+export interface DoctorCheck {
+  id: string;
+  label: string;
+  status: DoctorStatus;
+  summary: string;
+  detail: string | null;
+  fix_label: string | null;
+  fix_command: string | null;
+}
+
+export interface DoctorReport {
+  project_id: string;
+  generated_at: string;
+  missing_env_keys: string[];
+  install_action_id: string | null;
+  run_action_id: string | null;
+  open_action_id: string | null;
+  checks: DoctorCheck[];
 }
 
 export interface ActionExecution {

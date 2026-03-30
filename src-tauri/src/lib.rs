@@ -15,6 +15,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -24,8 +25,9 @@ use crate::core::inference::{
     scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
 };
 use crate::core::models::{
-    ActionExecution, EnvProfile, EnvTemplateField, ImportedRepo, LogEntry, ManagedProject,
-    PortLease, ProjectAction, RouteBinding,
+    ActionExecution, ActionKind, DoctorCheck, DoctorReport, DoctorStatus, EnvProfile,
+    EnvTemplateField, ImportedRepo, LogEntry, ManagedProject, PortLease, ProjectAction,
+    RouteBinding, RuntimeKind, RuntimeStatus,
 };
 use crate::runtime::manager::RuntimeManager;
 use crate::storage::store::ProjectStore;
@@ -59,7 +61,14 @@ fn set_workspace_roots(state: State<'_, AppState>, roots: Vec<String>) -> Result
 
 #[tauri::command]
 fn list_projects(state: State<'_, AppState>) -> Result<Vec<ManagedProject>, String> {
-    state.store.list()
+    let gateway_port = *state.gateway_port.lock();
+    let mut projects = Vec::new();
+    for project in state.store.list()? {
+        let refreshed = refresh_project_metadata(&state.store, project, gateway_port)?;
+        projects.push(refreshed);
+    }
+    projects.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(projects)
 }
 
 #[tauri::command]
@@ -91,23 +100,26 @@ fn register_local_project(
 
 #[tauri::command]
 fn list_project_actions(state: State<'_, AppState>, project_id: String) -> Result<Vec<ProjectAction>, String> {
-    let project = state
-        .store
-        .get(&project_id)?
-        .ok_or_else(|| "Project not found.".to_string())?;
+    let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     Ok(project.actions)
 }
 
 #[tauri::command]
 fn get_env_template(state: State<'_, AppState>, project_id: String) -> Result<Vec<EnvTemplateField>, String> {
-    let project = state
-        .store
-        .get(&project_id)?
-        .ok_or_else(|| "Project not found.".to_string())?;
+    let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     if !project.env_template.is_empty() {
         return Ok(project.env_template);
     }
     Ok(parse_env_template(Path::new(&project.root_path)))
+}
+
+#[tauri::command]
+fn get_doctor_report(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<DoctorReport, String> {
+    let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
+    Ok(build_doctor_report(&project))
 }
 
 #[tauri::command]
@@ -373,6 +385,354 @@ fn refresh_routes(store: &Arc<ProjectStore>, gateway_port: u16) -> Result<(), St
     Ok(())
 }
 
+fn fresh_project(store: &Arc<ProjectStore>, project_id: &str, gateway_port: u16) -> Result<ManagedProject, String> {
+    let project = store
+        .get(project_id)?
+        .ok_or_else(|| "Project not found.".to_string())?;
+    refresh_project_metadata(store, project, gateway_port)
+}
+
+fn refresh_project_metadata(
+    store: &Arc<ProjectStore>,
+    project: ManagedProject,
+    gateway_port: u16,
+) -> Result<ManagedProject, String> {
+    let inferred = infer_project_from_path(
+        Path::new(&project.root_path),
+        project.git_url.clone(),
+        gateway_port,
+    )
+    .unwrap_or_else(|| project.clone());
+
+    let mut merged = inferred;
+    merged.id = project.id.clone();
+    merged.status = project.status.clone();
+    merged.last_error = project.last_error.clone();
+    merged.resolved_port = project.resolved_port;
+    merged.env_profile = project.env_profile.clone();
+    merged.created_at = project.created_at.clone();
+    merged.updated_at = now_iso();
+    store.upsert(merged.clone())?;
+    Ok(merged)
+}
+
+fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
+    let install_action_id = project
+        .actions
+        .iter()
+        .find(|action| matches!(action.kind, ActionKind::Install))
+        .map(|action| action.id.clone());
+    let run_action_id = project
+        .actions
+        .iter()
+        .find(|action| matches!(action.kind, ActionKind::Run))
+        .map(|action| action.id.clone());
+    let open_action_id = project
+        .actions
+        .iter()
+        .find(|action| matches!(action.kind, ActionKind::Open))
+        .map(|action| action.id.clone());
+
+    let env_values = merged_env_values(project);
+    let missing_env_keys = project
+        .env_template
+        .iter()
+        .filter_map(|field| {
+            let value = env_values.get(&field.key).map(|value| value.trim()).unwrap_or("");
+            if value.is_empty() {
+                Some(field.key.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut checks = Vec::new();
+    checks.push(tooling_check(project));
+    checks.push(env_check(project, &missing_env_keys));
+    checks.push(install_check(project));
+    checks.push(port_check(project));
+    if !project.workspace_targets.is_empty() {
+        checks.push(DoctorCheck {
+            id: "workspace-targets".to_string(),
+            label: "Monorepo Targets".to_string(),
+            status: DoctorStatus::Info,
+            summary: format!(
+                "Detected {} runnable app target{} inside this repo.",
+                project.workspace_targets.len(),
+                if project.workspace_targets.len() == 1 { "" } else { "s" }
+            ),
+            detail: Some(
+                project
+                    .workspace_targets
+                    .iter()
+                    .map(|target| format!("{} ({})", target.name, target.relative_path))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            fix_label: None,
+            fix_command: None,
+        });
+    }
+    if !project.readme_hints.is_empty() {
+        checks.push(DoctorCheck {
+            id: "readme-hints".to_string(),
+            label: "README Hints".to_string(),
+            status: DoctorStatus::Info,
+            summary: "PortPilot found likely setup commands in the repository README.".to_string(),
+            detail: Some(project.readme_hints.join(" | ")),
+            fix_label: None,
+            fix_command: None,
+        });
+    }
+
+    DoctorReport {
+        project_id: project.id.clone(),
+        generated_at: now_iso(),
+        missing_env_keys,
+        install_action_id,
+        run_action_id,
+        open_action_id,
+        checks,
+    }
+}
+
+fn merged_env_values(project: &ManagedProject) -> HashMap<String, String> {
+    let mut values = project.env_profile.values.clone();
+    if let Some(raw) = &project.env_profile.raw_editor_text {
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') || !trimmed.contains('=') {
+                continue;
+            }
+            if let Some((key, value)) = trimmed.split_once('=') {
+                values.insert(key.trim().to_string(), value.trim().to_string());
+            }
+        }
+    }
+    values
+}
+
+fn tooling_check(project: &ManagedProject) -> DoctorCheck {
+    let (missing, fix_command) = match project.runtime_kind {
+        RuntimeKind::Node => (
+            missing_binaries(&["node", "npm"]),
+            Some("brew install node".to_string()),
+        ),
+        RuntimeKind::Python => (
+            if binary_exists("uv") || binary_exists("python3") || binary_exists("python") {
+                Vec::new()
+            } else {
+                vec!["uv or python3".to_string()]
+            },
+            Some("brew install uv || brew install python".to_string()),
+        ),
+        RuntimeKind::Rust => (missing_binaries(&["cargo"]), Some("brew install rustup-init".to_string())),
+        RuntimeKind::Go => (missing_binaries(&["go"]), Some("brew install go".to_string())),
+        RuntimeKind::Compose => {
+            let docker_ready = binary_exists("docker") || binary_exists("docker-compose");
+            (
+                if docker_ready { Vec::new() } else { vec!["docker".to_string()] },
+                Some("Install Docker Desktop or Colima before running compose actions.".to_string()),
+            )
+        }
+        RuntimeKind::Unknown => (Vec::new(), None),
+    };
+
+    if missing.is_empty() {
+        return DoctorCheck {
+            id: "tooling".to_string(),
+            label: "Tooling".to_string(),
+            status: DoctorStatus::Ok,
+            summary: "Required local tooling is available.".to_string(),
+            detail: None,
+            fix_label: None,
+            fix_command: None,
+        };
+    }
+
+    DoctorCheck {
+        id: "tooling".to_string(),
+        label: "Tooling".to_string(),
+        status: DoctorStatus::Error,
+        summary: format!("Missing required tools: {}.", missing.join(", ")),
+        detail: Some("Install the missing runtime before running this repository.".to_string()),
+        fix_label: Some("Suggested fix".to_string()),
+        fix_command,
+    }
+}
+
+fn env_check(project: &ManagedProject, missing_env_keys: &[String]) -> DoctorCheck {
+    if project.env_template.is_empty() {
+        return DoctorCheck {
+            id: "env".to_string(),
+            label: "Environment".to_string(),
+            status: DoctorStatus::Info,
+            summary: "No .env template was detected for this repository.".to_string(),
+            detail: Some("Use the raw editor if this project expects undocumented environment variables.".to_string()),
+            fix_label: None,
+            fix_command: None,
+        };
+    }
+
+    if missing_env_keys.is_empty() {
+        return DoctorCheck {
+            id: "env".to_string(),
+            label: "Environment".to_string(),
+            status: DoctorStatus::Ok,
+            summary: "Environment values are filled in for the detected template.".to_string(),
+            detail: None,
+            fix_label: None,
+            fix_command: None,
+        };
+    }
+
+    DoctorCheck {
+        id: "env".to_string(),
+        label: "Environment".to_string(),
+        status: DoctorStatus::Warn,
+        summary: format!("Missing {} environment value(s).", missing_env_keys.len()),
+        detail: Some(missing_env_keys.join(", ")),
+        fix_label: Some("Fill env values".to_string()),
+        fix_command: None,
+    }
+}
+
+fn install_check(project: &ManagedProject) -> DoctorCheck {
+    let root = Path::new(&project.root_path);
+    let install_hint = project
+        .actions
+        .iter()
+        .find(|action| matches!(action.kind, ActionKind::Install))
+        .map(|action| action.command.clone());
+
+    let install_ready = match project.runtime_kind {
+        RuntimeKind::Node => root.join("node_modules").exists() || install_hint.is_none(),
+        RuntimeKind::Python => root.join(".venv").exists() || install_hint.is_none(),
+        RuntimeKind::Rust | RuntimeKind::Go | RuntimeKind::Compose | RuntimeKind::Unknown => true,
+    };
+
+    if install_ready {
+        return DoctorCheck {
+            id: "install-state".to_string(),
+            label: "Dependencies".to_string(),
+            status: DoctorStatus::Ok,
+            summary: "PortPilot did not detect a blocking dependency install gap.".to_string(),
+            detail: install_hint.map(|command| format!("Primary install action: {command}")),
+            fix_label: None,
+            fix_command: None,
+        };
+    }
+
+    DoctorCheck {
+        id: "install-state".to_string(),
+        label: "Dependencies".to_string(),
+        status: DoctorStatus::Warn,
+        summary: "This repo still looks like it needs an install step.".to_string(),
+        detail: install_hint.clone(),
+        fix_label: Some("Run install".to_string()),
+        fix_command: install_hint,
+    }
+}
+
+fn port_check(project: &ManagedProject) -> DoctorCheck {
+    let port = project.resolved_port.or(project.preferred_port);
+    let Some(port) = port else {
+        return DoctorCheck {
+            id: "port".to_string(),
+            label: "Port".to_string(),
+            status: DoctorStatus::Info,
+            summary: "No preferred port was inferred yet.".to_string(),
+            detail: Some("PortPilot can still learn the actual route when the app boots.".to_string()),
+            fix_label: None,
+            fix_command: None,
+        };
+    };
+
+    if matches!(project.status, RuntimeStatus::Running) {
+        let reachable = std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().expect("socket addr"),
+            Duration::from_millis(350),
+        )
+        .is_ok();
+        return DoctorCheck {
+            id: "port".to_string(),
+            label: "Port".to_string(),
+            status: if reachable { DoctorStatus::Ok } else { DoctorStatus::Warn },
+            summary: if reachable {
+                format!("Route is currently reachable on port {port}.")
+            } else {
+                format!("Port {port} is assigned, but the service did not answer immediately.")
+            },
+            detail: Some(project.route_path_url.clone()),
+            fix_label: None,
+            fix_command: None,
+        };
+    }
+
+    let available = std::net::TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().expect("socket addr"),
+        Duration::from_millis(250),
+    )
+    .is_err();
+
+    DoctorCheck {
+        id: "port".to_string(),
+        label: "Port".to_string(),
+        status: if available {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        summary: if available {
+            format!("Preferred port {port} is currently free.")
+        } else {
+            format!("Preferred port {port} is already busy.")
+        },
+        detail: Some(if available {
+            "PortPilot can start the primary run action without needing a reassignment.".to_string()
+        } else {
+            "PortPilot can auto-reassign the port, or you can free the existing process first.".to_string()
+        }),
+        fix_label: None,
+        fix_command: None,
+    }
+}
+
+fn missing_binaries(binaries: &[&str]) -> Vec<String> {
+    binaries
+        .iter()
+        .filter(|binary| !binary_exists(binary))
+        .map(|binary| (*binary).to_string())
+        .collect()
+}
+
+fn binary_exists(binary: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    #[cfg(target_os = "windows")]
+    let extensions = std::env::var_os("PATHEXT")
+        .map(|value| {
+            value
+                .to_string_lossy()
+                .split(';')
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![".EXE".to_string(), ".CMD".to_string(), ".BAT".to_string()]);
+    #[cfg(not(target_os = "windows"))]
+    let extensions = vec![String::new()];
+
+    std::env::split_paths(&paths).any(|path| {
+        extensions.iter().any(|extension| {
+            let candidate = path.join(format!("{binary}{extension}"));
+            candidate.is_file()
+        })
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -412,6 +772,7 @@ pub fn run() {
             register_local_project,
             list_project_actions,
             get_env_template,
+            get_doctor_report,
             save_env_profile,
             list_action_executions,
             get_project_logs,

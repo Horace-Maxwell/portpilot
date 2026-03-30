@@ -110,9 +110,10 @@ PortPilot 现在已经以 GitHub 公开 Beta 的形式提供下载。
 - P1：更完整的 Docker / Compose 编排，并统一进同一个 Runtime 面板
 - P2：项目 recipe、预览分享 tunnel、以及更可扩展的技术栈推断能力
 
-完整优先级路线图见 [docs/product-roadmap.zh-CN.md](./docs/product-roadmap.zh-CN.md)。
-更具体的实施拆解见 [docs/execution-plan.md](./docs/execution-plan.md)，稳定版发布操作手册见 [docs/release-runbook.md](./docs/release-runbook.md)。
-带来源的竞品研究见 [docs/competitive-research.zh-CN.md](./docs/competitive-research.zh-CN.md)。
+已经落到应用里的部分：
+- 首次运行向导，直接提示 Install / Env / Run / Open 的下一步
+- Doctor 检查，覆盖本地工具、环境变量缺口、依赖安装状态、端口和路由可用性
+- 面向 workspace 型 Node monorepo 的子应用识别
 
 ## 开发校验
 

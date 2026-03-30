@@ -75,7 +75,10 @@ button {
 .empty-state p,
 .action-line p,
 .project-card__top p,
-.candidate-card p {
+.candidate-card p,
+.wizard-step p,
+.doctor-card p,
+.target-card p {
   margin: 0;
   color: #90a7c5;
 }
@@ -242,6 +245,11 @@ button {
   font-size: 0.82rem;
 }
 
+.candidate-card__hint {
+  margin-top: 0.45rem;
+  font-size: 0.84rem;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -366,6 +374,10 @@ button {
   border-radius: 18px;
 }
 
+.subpanel--full {
+  grid-column: 1 / -1;
+}
+
 .definition {
   display: grid;
   gap: 0.25rem;
@@ -417,6 +429,105 @@ textarea {
   gap: 1rem;
   padding-bottom: 0.8rem;
   border-bottom: 1px solid rgba(118, 149, 196, 0.12);
+}
+
+.wizard,
+.doctor-list,
+.target-grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.wizard-step,
+.doctor-card,
+.target-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(118, 149, 196, 0.12);
+}
+
+.wizard-step {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+}
+
+.wizard-step__index {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: rgba(61, 111, 255, 0.18);
+  color: #8dd6ff;
+  font-weight: 700;
+}
+
+.wizard-step__body {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.wizard-step--done {
+  border-color: rgba(23, 194, 151, 0.26);
+}
+
+.wizard-step--ready {
+  border-color: rgba(61, 111, 255, 0.26);
+}
+
+.doctor-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.doctor-card small {
+  color: #a6bdd8;
+}
+
+.doctor-card code {
+  display: block;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #d7e8ff;
+  word-break: break-word;
+}
+
+.status-pill--doctor-ok {
+  background: rgba(23, 194, 151, 0.18);
+  color: #76ffd8;
+}
+
+.status-pill--doctor-warn {
+  background: rgba(255, 196, 84, 0.16);
+  color: #ffe091;
+}
+
+.status-pill--doctor-error {
+  background: rgba(255, 92, 92, 0.16);
+  color: #ff9b9b;
+}
+
+.status-pill--doctor-info {
+  background: rgba(61, 111, 255, 0.18);
+  color: #9cc7ff;
+}
+
+.target-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.target-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: #90a7c5;
+  font-size: 0.82rem;
 }
 
 .table-shell {

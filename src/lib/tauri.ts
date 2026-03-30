@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActionExecution,
+  DoctorReport,
   EnvTemplateField,
   ImportedRepo,
   LogEntry,
@@ -24,6 +25,8 @@ export const api = {
     invoke<ProjectAction[]>("list_project_actions", { projectId }),
   getEnvTemplate: (projectId: string) =>
     invoke<EnvTemplateField[]>("get_env_template", { projectId }),
+  getDoctorReport: (projectId: string) =>
+    invoke<DoctorReport>("get_doctor_report", { projectId }),
   saveEnvProfile: (
     projectId: string,
     values: Record<string, string>,
