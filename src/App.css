@@ -215,7 +215,8 @@ button {
 .project-grid,
 .candidate-list,
 .runtime-list,
-.action-stack {
+.action-stack,
+.session-list {
   display: grid;
   gap: 0.9rem;
 }
@@ -233,6 +234,34 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.selection-toolbar {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  margin-bottom: 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(118, 149, 196, 0.12);
+}
+
+.selection-toolbar > span {
+  color: #8ea4c1;
+  font-size: 0.88rem;
+}
+
+.selection-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #8ea4c1;
+  font-size: 0.78rem;
+}
+
+.selection-check input {
+  width: auto;
+  margin: 0;
 }
 
 .project-card__meta,
@@ -433,14 +462,16 @@ textarea {
 
 .wizard,
 .doctor-list,
-.target-grid {
+.target-grid,
+.session-list {
   display: grid;
   gap: 0.8rem;
 }
 
 .wizard-step,
 .doctor-card,
-.target-card {
+.target-card,
+.session-card {
   display: grid;
   gap: 0.55rem;
   padding: 0.9rem 1rem;
@@ -528,6 +559,10 @@ textarea {
   gap: 0.5rem;
   color: #90a7c5;
   font-size: 0.82rem;
+}
+
+.session-card p {
+  margin: 0;
 }
 
 .table-shell {

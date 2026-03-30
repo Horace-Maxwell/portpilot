@@ -19,15 +19,17 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
+use uuid::Uuid;
 
 use crate::core::inference::{
     infer_project_from_path, now_iso, parse_env_template, repo_name_from_git_url,
     scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
 };
 use crate::core::models::{
-    ActionExecution, ActionKind, DoctorCheck, DoctorReport, DoctorStatus, EnvProfile,
-    EnvTemplateField, ImportedRepo, LogEntry, ManagedProject, PortLease, ProjectAction,
-    RouteBinding, RuntimeKind, RuntimeStatus,
+    ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
+    DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, ImportedRepo,
+    LogEntry, ManagedProject, PortLease, ProjectAction, RouteBinding, RuntimeKind,
+    RuntimeStatus, WorkspaceSession, WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
 use crate::storage::store::ProjectStore;
@@ -152,6 +154,68 @@ fn save_env_profile(
 }
 
 #[tauri::command]
+fn list_workspace_sessions(state: State<'_, AppState>) -> Result<Vec<WorkspaceSession>, String> {
+    state.store.list_sessions()
+}
+
+#[tauri::command]
+fn save_workspace_session(
+    state: State<'_, AppState>,
+    name: String,
+    project_ids: Vec<String>,
+    run_action_overrides: Option<HashMap<String, String>>,
+) -> Result<WorkspaceSession, String> {
+    let run_action_overrides = run_action_overrides.unwrap_or_default();
+    let projects = state.store.list()?;
+    let selected = projects
+        .into_iter()
+        .filter(|project| project_ids.iter().any(|id| id == &project.id))
+        .collect::<Vec<_>>();
+
+    if selected.is_empty() {
+        return Err("Select at least one managed project before saving a session.".to_string());
+    }
+
+    let session_projects = selected
+        .into_iter()
+        .map(|project| WorkspaceSessionProject {
+            project_id: project.id.clone(),
+            project_name: project.name.clone(),
+            auto_start: true,
+            run_action_id: run_action_overrides
+                .get(&project.id)
+                .cloned()
+                .or_else(|| primary_run_action(&project).map(|action| action.id.clone())),
+            env_profile_name: Some("default".to_string()),
+        })
+        .collect::<Vec<_>>();
+
+    let timestamp = now_iso();
+    let session = WorkspaceSession {
+        id: Uuid::new_v4().to_string(),
+        name: if name.trim().is_empty() {
+            format!("Workspace {}", timestamp)
+        } else {
+            name.trim().to_string()
+        },
+        projects: session_projects,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+    };
+    state.store.upsert_session(&session)?;
+    Ok(session)
+}
+
+#[tauri::command]
+fn delete_workspace_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<WorkspaceSession>, String> {
+    state.store.delete_session(&session_id)?;
+    state.store.list_sessions()
+}
+
+#[tauri::command]
 fn list_action_executions(state: State<'_, AppState>) -> Result<Vec<ActionExecution>, String> {
     Ok(state.runtime.list_executions())
 }
@@ -190,6 +254,125 @@ fn list_ports(state: State<'_, AppState>) -> Result<Vec<PortLease>, String> {
         }
     }
     Ok(leases)
+}
+
+#[tauri::command]
+fn run_batch_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ids: Vec<String>,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "run", project_ids)
+}
+
+#[tauri::command]
+fn stop_projects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ids: Vec<String>,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "stop", project_ids)
+}
+
+#[tauri::command]
+fn restart_projects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ids: Vec<String>,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "restart", project_ids)
+}
+
+#[tauri::command]
+fn restore_workspace_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<BatchActionResult, String> {
+    let session = state
+        .store
+        .get_session(&session_id)?
+        .ok_or_else(|| "Workspace session not found.".to_string())?;
+
+    let mut items = Vec::new();
+    for session_project in &session.projects {
+        let Some(project) = state.store.get(&session_project.project_id)? else {
+            items.push(BatchActionItemResult {
+                project_id: session_project.project_id.clone(),
+                project_name: session_project.project_name.clone(),
+                status: BatchItemStatus::Skipped,
+                message: "Project is no longer registered in PortPilot.".to_string(),
+                execution_id: None,
+            });
+            continue;
+        };
+
+        if !session_project.auto_start {
+            items.push(BatchActionItemResult {
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                status: BatchItemStatus::Skipped,
+                message: "Session kept this project in a stopped state.".to_string(),
+                execution_id: None,
+            });
+            continue;
+        }
+
+        let Some(action_id) = session_project
+            .run_action_id
+            .clone()
+            .or_else(|| primary_run_action(&project).map(|action| action.id.clone()))
+        else {
+            items.push(BatchActionItemResult {
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                status: BatchItemStatus::Skipped,
+                message: "No primary run action is available for this project.".to_string(),
+                execution_id: None,
+            });
+            continue;
+        };
+
+        let Some(action) = project
+            .actions
+            .iter()
+            .find(|action| action.id == action_id)
+            .cloned()
+        else {
+            items.push(BatchActionItemResult {
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                status: BatchItemStatus::Skipped,
+                message: "Saved run action is no longer available.".to_string(),
+                execution_id: None,
+            });
+            continue;
+        };
+
+        match state.runtime.run_action(
+            app.clone(),
+            Arc::clone(&state.store),
+            project.clone(),
+            action,
+        ) {
+            Ok(execution) => items.push(BatchActionItemResult {
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                status: BatchItemStatus::Success,
+                message: format!("Started {}.", execution.label),
+                execution_id: Some(execution.id),
+            }),
+            Err(error) => items.push(BatchActionItemResult {
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                status: BatchItemStatus::Failed,
+                message: error,
+                execution_id: None,
+            }),
+        }
+    }
+
+    Ok(summarize_batch_result("restore_session", items))
 }
 
 #[tauri::command]
@@ -323,6 +506,173 @@ fn import_repo_from_git(
     Ok(project)
 }
 
+fn execute_batch_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kind: &str,
+    project_ids: Vec<String>,
+) -> Result<BatchActionResult, String> {
+    if project_ids.is_empty() {
+        return Err("Select at least one project first.".to_string());
+    }
+
+    let mut items = Vec::new();
+    for project_id in project_ids {
+        let Some(project) = state.store.get(&project_id)? else {
+            items.push(BatchActionItemResult {
+                project_id,
+                project_name: "Unknown Project".to_string(),
+                status: BatchItemStatus::Skipped,
+                message: "Project is no longer registered.".to_string(),
+                execution_id: None,
+            });
+            continue;
+        };
+
+        let active_execution = state
+            .runtime
+            .list_executions()
+            .into_iter()
+            .find(|execution| {
+                execution.project_id == project.id
+                    && execution.status == crate::core::models::ExecutionStatus::Running
+            });
+
+        match kind {
+            "run" => {
+                let Some(action) = primary_run_action(&project) else {
+                    items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Skipped,
+                        message: "No primary run action was found.".to_string(),
+                        execution_id: None,
+                    });
+                    continue;
+                };
+
+                if active_execution.is_some() {
+                    items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Skipped,
+                        message: "Project is already running.".to_string(),
+                        execution_id: None,
+                    });
+                    continue;
+                }
+
+                match state.runtime.run_action(
+                    app.clone(),
+                    Arc::clone(&state.store),
+                    project.clone(),
+                    action.clone(),
+                ) {
+                    Ok(execution) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Success,
+                        message: format!("Started {}.", action.label),
+                        execution_id: Some(execution.id),
+                    }),
+                    Err(error) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Failed,
+                        message: error,
+                        execution_id: None,
+                    }),
+                }
+            }
+            "stop" => {
+                let Some(active) = active_execution else {
+                    items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Skipped,
+                        message: "No running execution to stop.".to_string(),
+                        execution_id: None,
+                    });
+                    continue;
+                };
+
+                match state.runtime.stop_execution(
+                    app.clone(),
+                    Arc::clone(&state.store),
+                    &active.id,
+                ) {
+                    Ok(Some(execution)) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Success,
+                        message: "Stopped active execution.".to_string(),
+                        execution_id: Some(execution.id),
+                    }),
+                    Ok(None) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Skipped,
+                        message: "No running execution to stop.".to_string(),
+                        execution_id: None,
+                    }),
+                    Err(error) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Failed,
+                        message: error,
+                        execution_id: None,
+                    }),
+                }
+            }
+            "restart" => {
+                let Some(action) = primary_run_action(&project) else {
+                    items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Skipped,
+                        message: "No primary run action was found.".to_string(),
+                        execution_id: None,
+                    });
+                    continue;
+                };
+
+                if let Some(active) = active_execution {
+                    let _ = state.runtime.stop_execution(
+                        app.clone(),
+                        Arc::clone(&state.store),
+                        &active.id,
+                    );
+                }
+
+                match state.runtime.run_action(
+                    app.clone(),
+                    Arc::clone(&state.store),
+                    project.clone(),
+                    action.clone(),
+                ) {
+                    Ok(execution) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Success,
+                        message: format!("Restarted {}.", action.label),
+                        execution_id: Some(execution.id),
+                    }),
+                    Err(error) => items.push(BatchActionItemResult {
+                        project_id: project.id.clone(),
+                        project_name: project.name.clone(),
+                        status: BatchItemStatus::Failed,
+                        message: error,
+                        execution_id: None,
+                    }),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(summarize_batch_result(kind, items))
+}
+
 fn unique_destination(root: &Path, repo_name: &str) -> String {
     let mut suffix = 0;
     loop {
@@ -372,6 +722,30 @@ fn render_env_file(template: &[EnvTemplateField], profile: &EnvProfile) -> Strin
     lines.join("\n")
 }
 
+fn summarize_batch_result(kind: &str, items: Vec<BatchActionItemResult>) -> BatchActionResult {
+    let success_count = items
+        .iter()
+        .filter(|item| matches!(item.status, BatchItemStatus::Success))
+        .count();
+    let failure_count = items
+        .iter()
+        .filter(|item| matches!(item.status, BatchItemStatus::Failed))
+        .count();
+    let skipped_count = items
+        .iter()
+        .filter(|item| matches!(item.status, BatchItemStatus::Skipped))
+        .count();
+
+    BatchActionResult {
+        kind: kind.to_string(),
+        total: items.len(),
+        success_count,
+        failure_count,
+        skipped_count,
+        items,
+    }
+}
+
 fn refresh_routes(store: &Arc<ProjectStore>, gateway_port: u16) -> Result<(), String> {
     for project in store.list()? {
         let slug = slugify(&project.name);
@@ -383,6 +757,13 @@ fn refresh_routes(store: &Arc<ProjectStore>, gateway_port: u16) -> Result<(), St
         })?;
     }
     Ok(())
+}
+
+fn primary_run_action(project: &ManagedProject) -> Option<&ProjectAction> {
+    project
+        .actions
+        .iter()
+        .find(|action| matches!(action.kind, ActionKind::Run))
 }
 
 fn fresh_project(store: &Arc<ProjectStore>, project_id: &str, gateway_port: u16) -> Result<ManagedProject, String> {
@@ -774,11 +1155,18 @@ pub fn run() {
             get_env_template,
             get_doctor_report,
             save_env_profile,
+            list_workspace_sessions,
+            save_workspace_session,
+            delete_workspace_session,
             list_action_executions,
             get_project_logs,
             list_ports,
             list_routes,
             stop_action_execution,
+            run_batch_action,
+            stop_projects,
+            restart_projects,
+            restore_workspace_session,
             restart_project,
             run_project_action,
             import_repo_from_git,

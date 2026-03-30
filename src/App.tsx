@@ -8,6 +8,7 @@ import { getCurrentVersion } from "./lib/updater";
 import type {
   ActionExecution,
   ActionKind,
+  BatchActionResult,
   DoctorReport,
   ImportedRepo,
   LogEntry,
@@ -15,6 +16,7 @@ import type {
   PortLease,
   ProjectAction,
   RouteBinding,
+  WorkspaceSession,
 } from "./shared/types";
 
 type NavKey =
@@ -46,6 +48,8 @@ export default function App() {
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
   const [doctorReports, setDoctorReports] = useState<Record<string, DoctorReport>>({});
+  const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("https://github.com/calesthio/Crucix.git");
@@ -135,6 +139,12 @@ export default function App() {
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
+    setSelectedProjectIds((current) =>
+      current.filter((projectId) => projects.some((project) => project.id === projectId)),
+    );
+  }, [projects]);
+
+  useEffect(() => {
     if (!selectedProject) {
       setEnvValues({});
       setEnvRawText("");
@@ -183,7 +193,7 @@ export default function App() {
   const selectedDoctorReport = selectedProject ? doctorReports[selectedProject.id] ?? null : null;
 
   async function refreshAll() {
-    const [roots, nextProjects, nextExecutions, nextLogs, nextPorts, nextRoutes] =
+    const [roots, nextProjects, nextExecutions, nextLogs, nextPorts, nextRoutes, nextSessions] =
       await Promise.all([
         api.listWorkspaceRoots(),
         api.listProjects(),
@@ -191,6 +201,7 @@ export default function App() {
         api.getProjectLogs(),
         api.listPorts(),
         api.listRoutes(),
+        api.listWorkspaceSessions(),
       ]);
     setWorkspaceRoots(roots);
     setWorkspaceDraft(roots.join("\n"));
@@ -200,6 +211,7 @@ export default function App() {
     setLogs(nextLogs);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
+    setSessions(nextSessions);
     setStatusMessage(`Loaded ${nextProjects.length} project${nextProjects.length === 1 ? "" : "s"}.`);
   }
 
@@ -276,6 +288,87 @@ export default function App() {
       await api.stopActionExecution(running.id);
       await refreshProjectsOnly();
     });
+  }
+
+  async function handleBatchAction(
+    kind: "run" | "stop" | "restart" | "restore",
+    sessionId?: string,
+  ) {
+    if (kind !== "restore" && selectedProjectIds.length === 0) {
+      setStatusMessage("Select at least one project first.");
+      return;
+    }
+
+    await runBusy(`batch-${kind}`, async () => {
+      let result: BatchActionResult;
+      if (kind === "run") {
+        result = await api.runBatchAction(selectedProjectIds);
+      } else if (kind === "stop") {
+        result = await api.stopProjects(selectedProjectIds);
+      } else if (kind === "restart") {
+        result = await api.restartProjects(selectedProjectIds);
+      } else {
+        result = await api.restoreWorkspaceSession(sessionId ?? "");
+      }
+
+      await refreshAll();
+      setStatusMessage(
+        `${result.kind}: ${result.success_count} succeeded, ${result.failure_count} failed, ${result.skipped_count} skipped.`,
+      );
+      if (kind === "restore") {
+        const firstStarted = result.items.find((item) => item.status === "success");
+        if (firstStarted) {
+          setSelectedProjectId(firstStarted.project_id);
+        }
+      }
+    });
+  }
+
+  async function handleSaveSession() {
+    if (selectedProjectIds.length === 0) {
+      setStatusMessage("Select at least one project before saving a session.");
+      return;
+    }
+
+    const proposedName =
+      globalThis.prompt?.(
+        "Name this workspace session",
+        `Workspace ${new Date().toLocaleString()}`,
+      ) ?? "";
+    if (!proposedName.trim()) {
+      return;
+    }
+
+    await runBusy("save-session", async () => {
+      const session = await api.saveWorkspaceSession(proposedName, selectedProjectIds, null);
+      setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      setStatusMessage(`Saved session "${session.name}" with ${session.projects.length} projects.`);
+    });
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    await runBusy(`delete-session-${sessionId}`, async () => {
+      const nextSessions = await api.deleteWorkspaceSession(sessionId);
+      setSessions(nextSessions);
+      setStatusMessage("Deleted workspace session.");
+    });
+  }
+
+  function toggleProjectSelection(projectId: string) {
+    setSelectedProjectIds((current) =>
+      current.includes(projectId)
+        ? current.filter((id) => id !== projectId)
+        : [...current, projectId],
+    );
+  }
+
+  function toggleAllProjects(projectList: ManagedProject[]) {
+    const ids = projectList.map((project) => project.id);
+    setSelectedProjectIds((current) =>
+      ids.every((id) => current.includes(id))
+        ? current.filter((id) => !ids.includes(id))
+        : Array.from(new Set([...current, ...ids])),
+    );
   }
 
   async function handleSaveEnv() {
@@ -398,8 +491,19 @@ export default function App() {
           <section className="panel-grid">
             <section className="panel panel--wide">
               <div className="panel__header">
-                <h3>Command Deck</h3>
-                <p>The fastest path from clone to live route.</p>
+                <div>
+                  <h3>Command Deck</h3>
+                  <p>The fastest path from clone to live route.</p>
+                </div>
+                <SelectionToolbar
+                  selectedCount={selectedProjectIds.length}
+                  allSelected={projects.length > 0 && projects.every((project) => selectedProjectIds.includes(project.id))}
+                  onToggleAll={() => toggleAllProjects(projects)}
+                  onRun={() => void handleBatchAction("run")}
+                  onStop={() => void handleBatchAction("stop")}
+                  onRestart={() => void handleBatchAction("restart")}
+                  onSaveSession={() => void handleSaveSession()}
+                />
               </div>
               <div className="project-grid">
                 {projects.map((project) => {
@@ -409,6 +513,14 @@ export default function App() {
                   return (
                     <article key={project.id} className="project-card">
                       <div className="project-card__top">
+                        <label className="selection-check">
+                          <input
+                            checked={selectedProjectIds.includes(project.id)}
+                            onChange={() => toggleProjectSelection(project.id)}
+                            type="checkbox"
+                          />
+                          <span>Select</span>
+                        </label>
                         <div>
                           <span className={`status-pill status-pill--${project.status}`}>
                             {project.status.replace("_", " ")}
@@ -471,8 +583,48 @@ export default function App() {
 
             <section className="panel">
               <div className="panel__header">
-                <h3>Live Preview</h3>
-                <p>Open the routed app inside PortPilot when you want quick verification.</p>
+                <div>
+                  <h3>Saved Sessions</h3>
+                  <p>Restore a whole workspace in one click, then verify the result in the live preview below.</p>
+                </div>
+              </div>
+              <div className="session-list">
+                {sessions.map((session) => (
+                  <article key={session.id} className="session-card">
+                    <div>
+                      <strong>{session.name}</strong>
+                      <p>{session.projects.length} projects</p>
+                    </div>
+                    <div className="action-row">
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleBatchAction("restore", session.id)}
+                        type="button"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => void handleDeleteSession(session.id)}
+                        type="button"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {sessions.length === 0 && (
+                  <EmptyState
+                    title="No sessions saved yet"
+                    description="Select a group of projects and save them as a workspace session."
+                  />
+                )}
+              </div>
+              <div className="panel__header">
+                <div>
+                  <h3>Live Preview</h3>
+                  <p>Open the routed app inside PortPilot when you want quick verification.</p>
+                </div>
               </div>
               {embedUrl ? (
                 <iframe className="embed-frame" src={embedUrl} title="Embedded project preview" />
@@ -566,9 +718,22 @@ export default function App() {
           <section className="detail-layout">
             <aside className="project-list panel">
               <div className="panel__header">
-                <h3>Projects</h3>
-                <p>Switch between managed repositories and action groups.</p>
+                <div>
+                  <h3>Projects</h3>
+                  <p>Switch between managed repositories and action groups.</p>
+                </div>
               </div>
+              <SelectionToolbar
+                selectedCount={selectedProjectIds.length}
+                allSelected={
+                  projects.length > 0 && projects.every((project) => selectedProjectIds.includes(project.id))
+                }
+                onToggleAll={() => toggleAllProjects(projects)}
+                onRun={() => void handleBatchAction("run")}
+                onStop={() => void handleBatchAction("stop")}
+                onRestart={() => void handleBatchAction("restart")}
+                onSaveSession={() => void handleSaveSession()}
+              />
               {projects.map((project) => (
                 <button
                   key={project.id}
@@ -576,6 +741,17 @@ export default function App() {
                   onClick={() => setSelectedProjectId(project.id)}
                   type="button"
                 >
+                  <label
+                    className="selection-check"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      checked={selectedProjectIds.includes(project.id)}
+                      onChange={() => toggleProjectSelection(project.id)}
+                      type="checkbox"
+                    />
+                    <span />
+                  </label>
                   <div>
                     <strong>{project.name}</strong>
                     <span>{project.runtime_kind}</span>
@@ -1012,6 +1188,39 @@ function StatCard(props: { label: string; value: string }) {
       <span>{props.label}</span>
       <strong>{props.value}</strong>
     </article>
+  );
+}
+
+function SelectionToolbar(props: {
+  selectedCount: number;
+  allSelected: boolean;
+  onToggleAll: () => void;
+  onRun: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onSaveSession: () => void;
+}) {
+  return (
+    <div className="selection-toolbar">
+      <button className="ghost-button" onClick={props.onToggleAll} type="button">
+        {props.allSelected ? "Clear Visible" : "Select Visible"}
+      </button>
+      <span>{props.selectedCount} selected</span>
+      <div className="action-row">
+        <button className="primary-button" disabled={props.selectedCount === 0} onClick={props.onRun} type="button">
+          Start Selected
+        </button>
+        <button className="secondary-button" disabled={props.selectedCount === 0} onClick={props.onStop} type="button">
+          Stop Selected
+        </button>
+        <button className="secondary-button" disabled={props.selectedCount === 0} onClick={props.onRestart} type="button">
+          Restart Selected
+        </button>
+        <button className="ghost-button" disabled={props.selectedCount === 0} onClick={props.onSaveSession} type="button">
+          Save as Session
+        </button>
+      </div>
+    </div>
   );
 }
 

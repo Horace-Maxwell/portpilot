@@ -69,6 +69,14 @@ pub enum ExecutionStatus {
     Stopped,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchItemStatus {
+    Success,
+    Failed,
+    Skipped,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedRepo {
     pub name: String,
@@ -186,6 +194,43 @@ pub struct DoctorReport {
     pub run_action_id: Option<String>,
     pub open_action_id: Option<String>,
     pub checks: Vec<DoctorCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSessionProject {
+    pub project_id: String,
+    pub project_name: String,
+    pub auto_start: bool,
+    pub run_action_id: Option<String>,
+    pub env_profile_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSession {
+    pub id: String,
+    pub name: String,
+    pub projects: Vec<WorkspaceSessionProject>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchActionItemResult {
+    pub project_id: String,
+    pub project_name: String,
+    pub status: BatchItemStatus,
+    pub message: String,
+    pub execution_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchActionResult {
+    pub kind: String,
+    pub total: usize,
+    pub success_count: usize,
+    pub failure_count: usize,
+    pub skipped_count: usize,
+    pub items: Vec<BatchActionItemResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

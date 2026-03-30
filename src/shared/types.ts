@@ -20,6 +20,7 @@ export type ActionSource = "inferred" | "user_defined";
 export type EnvFieldType = "text" | "secret" | "boolean" | "multiline";
 export type ExecutionStatus = "running" | "success" | "failed" | "stopped";
 export type DoctorStatus = "ok" | "warn" | "error" | "info";
+export type BatchItemStatus = "success" | "failed" | "skipped";
 
 export interface ImportedRepo {
   name: string;
@@ -115,6 +116,39 @@ export interface DoctorReport {
   run_action_id: string | null;
   open_action_id: string | null;
   checks: DoctorCheck[];
+}
+
+export interface WorkspaceSessionProject {
+  project_id: string;
+  project_name: string;
+  auto_start: boolean;
+  run_action_id: string | null;
+  env_profile_name: string | null;
+}
+
+export interface WorkspaceSession {
+  id: string;
+  name: string;
+  projects: WorkspaceSessionProject[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BatchActionItemResult {
+  project_id: string;
+  project_name: string;
+  status: BatchItemStatus;
+  message: string;
+  execution_id: string | null;
+}
+
+export interface BatchActionResult {
+  kind: string;
+  total: number;
+  success_count: number;
+  failure_count: number;
+  skipped_count: number;
+  items: BatchActionItemResult[];
 }
 
 export interface ActionExecution {

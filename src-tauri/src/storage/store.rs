@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use rusqlite::{params, Connection};
 
-use crate::core::models::{ActionExecution, ExecutionStatus, ManagedProject, RuntimeStatus};
+use crate::core::models::{
+    ActionExecution, ExecutionStatus, ManagedProject, RuntimeStatus, WorkspaceSession,
+};
 
 #[derive(Debug)]
 pub struct ProjectStore {
@@ -207,6 +209,70 @@ impl ProjectStore {
         Ok(())
     }
 
+    pub fn list_sessions(&self) -> Result<Vec<WorkspaceSession>, String> {
+        let connection = self.connect()?;
+        let mut stmt = connection
+            .prepare("SELECT payload FROM workspace_sessions ORDER BY updated_at DESC")
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        let mut sessions = Vec::new();
+        for row in rows {
+            let payload = row.map_err(|error| error.to_string())?;
+            sessions.push(
+                serde_json::from_str::<WorkspaceSession>(&payload)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        Ok(sessions)
+    }
+
+    pub fn get_session(&self, id: &str) -> Result<Option<WorkspaceSession>, String> {
+        let connection = self.connect()?;
+        let payload: Option<String> = connection
+            .query_row(
+                "SELECT payload FROM workspace_sessions WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+
+        payload
+            .map(|value| {
+                serde_json::from_str::<WorkspaceSession>(&value).map_err(|error| error.to_string())
+            })
+            .transpose()
+    }
+
+    pub fn upsert_session(&self, session: &WorkspaceSession) -> Result<(), String> {
+        let connection = self.connect()?;
+        let payload = serde_json::to_string(session).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                r#"
+                INSERT INTO workspace_sessions (id, name, updated_at, payload)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  updated_at = excluded.updated_at,
+                  payload = excluded.payload
+                "#,
+                params![session.id, session.name, session.updated_at, payload],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_session(&self, id: &str) -> Result<(), String> {
+        let connection = self.connect()?;
+        connection
+            .execute("DELETE FROM workspace_sessions WHERE id = ?1", params![id])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn connect(&self) -> Result<Connection, String> {
         Connection::open(&self.path).map_err(|error| error.to_string())
     }
@@ -246,6 +312,13 @@ impl ProjectStore {
                   finished_at TEXT,
                   payload TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS workspace_sessions (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  payload TEXT NOT NULL
+                );
                 "#,
             )
             .map_err(|error| error.to_string())?;
@@ -264,5 +337,46 @@ impl<T> OptionalRow<T> for rusqlite::Result<T> {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use uuid::Uuid;
+
+    use super::ProjectStore;
+    use crate::core::models::{WorkspaceSession, WorkspaceSessionProject};
+
+    #[test]
+    fn stores_and_deletes_workspace_sessions() {
+        let root = std::env::temp_dir().join(format!("portpilot-store-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let store = ProjectStore::load(root.join("portpilot.db")).unwrap();
+
+        let session = WorkspaceSession {
+            id: "session-a".to_string(),
+            name: "Morning".to_string(),
+            projects: vec![WorkspaceSessionProject {
+                project_id: "project-a".to_string(),
+                project_name: "Crucix".to_string(),
+                auto_start: true,
+                run_action_id: Some("run-dev".to_string()),
+                env_profile_name: Some("default".to_string()),
+            }],
+            created_at: "2026-03-29T00:00:00Z".to_string(),
+            updated_at: "2026-03-29T00:00:00Z".to_string(),
+        };
+
+        store.upsert_session(&session).unwrap();
+        let listed = store.list_sessions().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Morning");
+
+        store.delete_session("session-a").unwrap();
+        assert!(store.list_sessions().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 }

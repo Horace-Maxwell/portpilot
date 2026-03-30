@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActionExecution,
+  BatchActionResult,
   DoctorReport,
   EnvTemplateField,
   ImportedRepo,
@@ -9,6 +10,7 @@ import type {
   PortLease,
   ProjectAction,
   RouteBinding,
+  WorkspaceSession,
 } from "../shared/types";
 
 export const api = {
@@ -33,6 +35,27 @@ export const api = {
     rawEditorText?: string | null,
   ) => invoke<ManagedProject>("save_env_profile", { projectId, values, rawEditorText }),
   listActionExecutions: () => invoke<ActionExecution[]>("list_action_executions"),
+  listWorkspaceSessions: () => invoke<WorkspaceSession[]>("list_workspace_sessions"),
+  saveWorkspaceSession: (
+    name: string,
+    projectIds: string[],
+    runActionOverrides?: Record<string, string> | null,
+  ) =>
+    invoke<WorkspaceSession>("save_workspace_session", {
+      name,
+      projectIds,
+      runActionOverrides,
+    }),
+  deleteWorkspaceSession: (sessionId: string) =>
+    invoke<WorkspaceSession[]>("delete_workspace_session", { sessionId }),
+  restoreWorkspaceSession: (sessionId: string) =>
+    invoke<BatchActionResult>("restore_workspace_session", { sessionId }),
+  runBatchAction: (projectIds: string[]) =>
+    invoke<BatchActionResult>("run_batch_action", { projectIds }),
+  stopProjects: (projectIds: string[]) =>
+    invoke<BatchActionResult>("stop_projects", { projectIds }),
+  restartProjects: (projectIds: string[]) =>
+    invoke<BatchActionResult>("restart_projects", { projectIds }),
   getProjectLogs: (projectId?: string | null) =>
     invoke<LogEntry[]>("get_project_logs", { projectId }),
   listPorts: () => invoke<PortLease[]>("list_ports"),
