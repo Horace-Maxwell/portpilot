@@ -2,13 +2,26 @@
   font-family:
     "SF Pro Display",
     "Satoshi",
-    "Inter",
+    "Avenir Next",
+    "Helvetica Neue",
     sans-serif;
   color: #e9edf3;
+  --bg-0: #03070d;
+  --bg-1: #07111f;
+  --bg-2: #0b1830;
+  --panel: rgba(8, 16, 31, 0.78);
+  --panel-soft: rgba(255, 255, 255, 0.035);
+  --line: rgba(129, 157, 201, 0.16);
+  --line-strong: rgba(137, 172, 224, 0.26);
+  --copy-soft: #90a7c5;
+  --copy-strong: #edf4ff;
+  --accent-a: #5f93ff;
+  --accent-b: #26d1a2;
   background:
-    radial-gradient(circle at top left, rgba(61, 111, 255, 0.2), transparent 28%),
-    radial-gradient(circle at top right, rgba(23, 194, 151, 0.18), transparent 24%),
-    linear-gradient(180deg, #07111f, #03070d 62%);
+    radial-gradient(circle at top left, rgba(95, 147, 255, 0.24), transparent 26%),
+    radial-gradient(circle at top right, rgba(38, 209, 162, 0.18), transparent 24%),
+    radial-gradient(circle at bottom left, rgba(28, 86, 196, 0.16), transparent 28%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0) 62%);
 }
 
 * {
@@ -20,6 +33,7 @@ body {
   min-width: 1100px;
   min-height: 100vh;
   background: transparent;
+  color: var(--copy-strong);
 }
 
 button,
@@ -41,6 +55,9 @@ button {
   grid-template-columns: 320px 1fr;
   min-height: 100vh;
   color: #edf4ff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
+    radial-gradient(circle at 20% 20%, rgba(95, 147, 255, 0.08), transparent 28%);
 }
 
 .sidebar {
@@ -48,9 +65,12 @@ button {
   flex-direction: column;
   gap: 1.2rem;
   padding: 1.5rem;
-  border-right: 1px solid rgba(139, 166, 212, 0.18);
-  background: rgba(4, 12, 24, 0.82);
-  backdrop-filter: blur(22px);
+  border-right: 1px solid rgba(139, 166, 212, 0.14);
+  background:
+    linear-gradient(180deg, rgba(8, 15, 28, 0.92), rgba(4, 10, 20, 0.82)),
+    rgba(4, 12, 24, 0.82);
+  backdrop-filter: blur(28px);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
 }
 
 .brand__eyebrow,
@@ -95,9 +115,13 @@ button {
 .project-card,
 .candidate-card,
 .runtime-card {
-  border: 1px solid rgba(129, 157, 201, 0.16);
-  background: rgba(10, 18, 34, 0.82);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(17, 28, 53, 0.28), transparent 38%),
+    var(--panel);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .stat-card {
@@ -136,12 +160,16 @@ button {
 .nav__item {
   padding: 0.9rem 1rem;
   text-align: left;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
   color: #dbe7ff;
+  border: 1px solid transparent;
 }
 
 .nav__item.is-active {
-  background: linear-gradient(90deg, rgba(29, 108, 244, 0.34), rgba(23, 194, 151, 0.22));
+  background:
+    linear-gradient(90deg, rgba(95, 147, 255, 0.3), rgba(38, 209, 162, 0.16)),
+    rgba(255, 255, 255, 0.03);
+  border-color: rgba(137, 172, 224, 0.18);
 }
 
 .sidebar__footer {
@@ -165,10 +193,14 @@ button {
   gap: 1rem;
   padding: 1.3rem 1.5rem;
   border-radius: 22px;
-  border: 1px solid rgba(120, 166, 234, 0.18);
+  border: 1px solid rgba(120, 166, 234, 0.16);
   background:
+    radial-gradient(circle at top right, rgba(95, 147, 255, 0.12), transparent 30%),
     linear-gradient(135deg, rgba(17, 32, 61, 0.92), rgba(5, 14, 28, 0.88)),
-    linear-gradient(90deg, rgba(61, 111, 255, 0.28), rgba(23, 194, 151, 0.18));
+    linear-gradient(90deg, rgba(61, 111, 255, 0.24), rgba(23, 194, 151, 0.16));
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .hero__actions,
@@ -323,23 +355,25 @@ button {
 .primary-button,
 .secondary-button,
 .ghost-button {
-  padding: 0.7rem 1rem;
+  padding: 0.72rem 1rem;
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
 }
 
 .primary-button {
-  background: linear-gradient(135deg, #3d6fff, #17c297);
-  color: #03111d;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  color: #04111c;
   font-weight: 700;
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
   color: #d8e7ff;
-  border: 1px solid rgba(122, 147, 188, 0.18);
+  border: 1px solid rgba(122, 147, 188, 0.16);
 }
 
 .ghost-button {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.015);
   color: #9cc7ff;
   border: 1px dashed rgba(122, 147, 188, 0.28);
 }
@@ -350,6 +384,7 @@ button {
 .nav__item:hover,
 .project-list__item:hover {
   transform: translateY(-1px);
+  filter: brightness(1.03);
 }
 
 .detail-layout {
@@ -369,8 +404,9 @@ button {
   justify-content: space-between;
   gap: 0.8rem;
   padding: 0.85rem 0.95rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
   color: #e5efff;
+  border: 1px solid transparent;
 }
 
 .project-list__item div {
@@ -385,7 +421,8 @@ button {
 }
 
 .project-list__item.is-active {
-  background: rgba(61, 111, 255, 0.22);
+  background: rgba(95, 147, 255, 0.2);
+  border-color: rgba(137, 172, 224, 0.18);
 }
 
 .status-dot {
@@ -579,8 +616,10 @@ textarea {
   gap: 0.7rem;
   padding: 0.9rem 1rem;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(118, 149, 196, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(118, 149, 196, 0.13);
 }
 
 .runtime-summary__meta,
@@ -650,8 +689,8 @@ textarea {
   gap: 0.5rem;
   padding: 0.55rem 0.7rem;
   border-radius: 999px;
-  background: rgba(64, 110, 177, 0.14);
-  border: 1px solid rgba(118, 149, 196, 0.14);
+  background: linear-gradient(135deg, rgba(64, 110, 177, 0.16), rgba(20, 48, 88, 0.12));
+  border: 1px solid rgba(118, 149, 196, 0.12);
   color: #cfe2ff;
 }
 
@@ -685,6 +724,9 @@ textarea {
 
 .table-shell {
   overflow: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(118, 149, 196, 0.1);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 table {
@@ -774,7 +816,8 @@ th {
   gap: 0.35rem;
   padding: 1rem;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px dashed rgba(118, 149, 196, 0.14);
 }
 
 .settings-textarea {

@@ -29,7 +29,10 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    pub fn new(log_dir: PathBuf, persisted_executions: Vec<ActionExecution>) -> Result<Self, String> {
+    pub fn new(
+        log_dir: PathBuf,
+        persisted_executions: Vec<ActionExecution>,
+    ) -> Result<Self, String> {
         fs::create_dir_all(&log_dir).map_err(|error| error.to_string())?;
         let execution_map = persisted_executions
             .into_iter()
@@ -170,20 +173,10 @@ impl RuntimeManager {
         }
 
         if let Some(stdout) = stdout {
-            self.spawn_stream_reader(
-                app.clone(),
-                execution_id.clone(),
-                "stdout",
-                stdout,
-            );
+            self.spawn_stream_reader(app.clone(), execution_id.clone(), "stdout", stdout);
         }
         if let Some(stderr) = stderr {
-            self.spawn_stream_reader(
-                app.clone(),
-                execution_id.clone(),
-                "stderr",
-                stderr,
-            );
+            self.spawn_stream_reader(app.clone(), execution_id.clone(), "stderr", stderr);
         }
 
         self.spawn_waiter(app, store, project.id, action.kind, execution_id, child);
@@ -380,7 +373,11 @@ impl RuntimeManager {
 
         let log_file = log_dir.join(format!("{}.log", entry.execution_id));
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file) {
-            let _ = writeln!(file, "[{}] [{}] {}", entry.timestamp, entry.stream, entry.message);
+            let _ = writeln!(
+                file,
+                "[{}] [{}] {}",
+                entry.timestamp, entry.stream, entry.message
+            );
         }
 
         let _ = app.emit("action-log", &entry);
@@ -402,7 +399,11 @@ fn shell_command(command: &str) -> Command {
     }
 }
 
-fn prepare_command(project: &ManagedProject, action: &ProjectAction, assigned_port: Option<u16>) -> String {
+fn prepare_command(
+    project: &ManagedProject,
+    action: &ProjectAction,
+    assigned_port: Option<u16>,
+) -> String {
     if fixed_port_from_command(&action.command).is_some() {
         return action.command.clone();
     }

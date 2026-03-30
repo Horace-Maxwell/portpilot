@@ -10,8 +10,8 @@ use walkdir::WalkDir;
 
 use crate::core::models::{
     ActionKind, ActionSource, DetectedAppTarget, EnvFieldType, EnvProfile, EnvTemplateField,
-    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, ProjectProfile,
-    ProjectProfileKind, ProjectRecipe, RouteStrategy, RuntimeKind, RuntimeStatus,
+    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, ProjectProfile, ProjectProfileKind,
+    ProjectRecipe, RouteStrategy, RuntimeKind, RuntimeStatus,
 };
 
 pub const DEFAULT_WORKSPACE_ROOT: &str = "/Users/horacedong/Desktop/Github";
@@ -191,7 +191,11 @@ pub fn parse_env_template_contents(contents: &str) -> Vec<EnvTemplateField> {
                 continue;
             }
 
-            let default_value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+            let default_value = value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
             let description = if comment_buffer.is_empty() {
                 None
             } else {
@@ -207,7 +211,10 @@ pub fn parse_env_template_contents(contents: &str) -> Vec<EnvTemplateField> {
                 EnvFieldType::Secret
             } else if matches!(default_value.as_str(), "true" | "false" | "1" | "0") {
                 EnvFieldType::Boolean
-            } else if default_value.contains("\\n") || default_value.contains('{') || default_value.contains('[') {
+            } else if default_value.contains("\\n")
+                || default_value.contains('{')
+                || default_value.contains('[')
+            {
                 EnvFieldType::Multiline
             } else {
                 EnvFieldType::Text
@@ -320,7 +327,12 @@ pub fn infer_project_from_path(
         return None;
     }
 
-    let project_kind = if compose_file.is_some() && !package_json.exists() && !pyproject.exists() && !cargo_toml.exists() && !go_mod.exists() {
+    let project_kind = if compose_file.is_some()
+        && !package_json.exists()
+        && !pyproject.exists()
+        && !cargo_toml.exists()
+        && !go_mod.exists()
+    {
         ProjectKind::Compose
     } else {
         ProjectKind::Repo
@@ -474,15 +486,23 @@ fn infer_project_profile(
     );
 
     if matches!(profile.kind, ProjectProfileKind::Unknown) {
-        profile.kind = infer_generic_profile_kind(runtime_kind, project_kind, compose_file, workspace_targets);
+        profile.kind =
+            infer_generic_profile_kind(runtime_kind, project_kind, compose_file, workspace_targets);
     }
 
     if profile.summary.is_none() {
-        profile.summary = Some(default_profile_summary(&profile.kind, compose_file.is_some(), readme_hints));
+        profile.summary = Some(default_profile_summary(
+            &profile.kind,
+            compose_file.is_some(),
+            readme_hints,
+        ));
     }
 
     if profile.route_strategy.is_none() {
-        profile.route_strategy = Some(default_route_strategy(&profile.kind, compose_file.is_some()));
+        profile.route_strategy = Some(default_route_strategy(
+            &profile.kind,
+            compose_file.is_some(),
+        ));
     }
 
     if profile.preferred_entrypoint.is_none() {
@@ -534,13 +554,18 @@ fn builtin_project_profile(
             kind: ProjectProfileKind::AiUi,
             preferred_entrypoint: actions
                 .iter()
-                .find(|action| action.command.contains("server.js") || action.command.contains("npm start"))
+                .find(|action| {
+                    action.command.contains("server.js") || action.command.contains("npm start")
+                })
                 .map(|action| action.id.clone()),
             required_services: Vec::new(),
             required_env_groups: vec!["model-providers".to_string()],
             known_ports: vec![preferred_port.unwrap_or(8000)],
             route_strategy: Some(RouteStrategy::LocalhostDirect),
-            summary: Some("Local AI chat UI with a fixed localhost port and optional provider credentials.".to_string()),
+            summary: Some(
+                "Local AI chat UI with a fixed localhost port and optional provider credentials."
+                    .to_string(),
+            ),
         };
     }
 
@@ -707,14 +732,21 @@ fn builtin_project_profile(
                 .find(|action| matches!(action.kind, ActionKind::Run))
                 .map(|action| action.id.clone()),
             required_services: compose_services,
-            required_env_groups: if matches!(runtime_kind, RuntimeKind::Python) || workspace_targets.iter().any(|target| matches!(target.runtime_kind, RuntimeKind::Python)) {
+            required_env_groups: if matches!(runtime_kind, RuntimeKind::Python)
+                || workspace_targets
+                    .iter()
+                    .any(|target| matches!(target.runtime_kind, RuntimeKind::Python))
+            {
                 vec!["backend".to_string()]
             } else {
                 Vec::new()
             },
             known_ports: preferred_port.into_iter().collect(),
             route_strategy: Some(RouteStrategy::Hybrid),
-            summary: Some("Mixed-stack repo with multiple app targets and supporting local services.".to_string()),
+            summary: Some(
+                "Mixed-stack repo with multiple app targets and supporting local services."
+                    .to_string(),
+            ),
         };
     }
 
@@ -729,7 +761,10 @@ fn builtin_project_profile(
             required_env_groups: Vec::new(),
             known_ports: preferred_port.into_iter().collect(),
             route_strategy: Some(RouteStrategy::ComposeService),
-            summary: Some("Compose-backed local stack with multiple services and published ports.".to_string()),
+            summary: Some(
+                "Compose-backed local stack with multiple services and published ports."
+                    .to_string(),
+            ),
         };
     }
 
@@ -934,7 +969,8 @@ fn parse_compose_env_template(compose_file: &Path) -> Vec<EnvTemplateField> {
 fn apply_recipe_targets(targets: &mut Vec<DetectedAppTarget>, recipe: &ProjectRecipe) {
     for recipe_target in &recipe.targets {
         let Some(target) = targets.iter_mut().find(|candidate| {
-            candidate.id == recipe_target.id || candidate.relative_path == recipe_target.relative_path
+            candidate.id == recipe_target.id
+                || candidate.relative_path == recipe_target.relative_path
         }) else {
             continue;
         };
@@ -1049,14 +1085,14 @@ pub fn infer_actions(
         if let Some(scripts) = read_package_scripts(root) {
             for script in collect_preferred_node_run_scripts(&scripts) {
                 actions.push(action(
-                        &format!("run-{script}"),
-                        &label_for_node_run_script(&script),
-                        ActionKind::Run,
-                        &package_manager.run_script_command(&script),
-                        &workdir,
-                        port_hint,
-                        ActionSource::Inferred,
-                    ));
+                    &format!("run-{script}"),
+                    &label_for_node_run_script(&script),
+                    ActionKind::Run,
+                    &package_manager.run_script_command(&script),
+                    &workdir,
+                    port_hint,
+                    ActionSource::Inferred,
+                ));
             }
 
             if root.join("server.mjs").exists() {
@@ -1102,25 +1138,73 @@ pub fn infer_actions(
             RuntimeKind::Python => {
                 let requirements = root.join("requirements.txt");
                 if requirements.exists() {
-                    actions.push(action("install-pip", "Install", ActionKind::Install, "pip install -r requirements.txt", &workdir, None, ActionSource::Inferred));
+                    actions.push(action(
+                        "install-pip",
+                        "Install",
+                        ActionKind::Install,
+                        "pip install -r requirements.txt",
+                        &workdir,
+                        None,
+                        ActionSource::Inferred,
+                    ));
                 } else {
-                    actions.push(action("install-uv", "Install", ActionKind::Install, "uv sync || pip install -e .", &workdir, None, ActionSource::Inferred));
+                    actions.push(action(
+                        "install-uv",
+                        "Install",
+                        ActionKind::Install,
+                        "uv sync || pip install -e .",
+                        &workdir,
+                        None,
+                        ActionSource::Inferred,
+                    ));
                 }
                 let python_run_command = if root.join("main.py").exists() {
                     "python main.py"
                 } else {
                     "uv run . || python -m ."
                 };
-                actions.push(action("run-python", "Run", ActionKind::Run, python_run_command, &workdir, port_hint, ActionSource::Inferred));
+                actions.push(action(
+                    "run-python",
+                    "Run",
+                    ActionKind::Run,
+                    python_run_command,
+                    &workdir,
+                    port_hint,
+                    ActionSource::Inferred,
+                ));
             }
             RuntimeKind::Rust => {
-                actions.push(action("run-rust", "Run", ActionKind::Run, "cargo run", &workdir, port_hint, ActionSource::Inferred));
-                actions.push(action("build-rust", "Build", ActionKind::Build, "cargo build --release", &workdir, None, ActionSource::Inferred));
+                actions.push(action(
+                    "run-rust",
+                    "Run",
+                    ActionKind::Run,
+                    "cargo run",
+                    &workdir,
+                    port_hint,
+                    ActionSource::Inferred,
+                ));
+                actions.push(action(
+                    "build-rust",
+                    "Build",
+                    ActionKind::Build,
+                    "cargo build --release",
+                    &workdir,
+                    None,
+                    ActionSource::Inferred,
+                ));
             }
             RuntimeKind::Go => {
                 let make_targets = read_make_targets(root);
                 if make_targets.contains("install") {
-                    actions.push(action("install-go-make", "Install", ActionKind::Install, "make install", &workdir, None, ActionSource::Inferred));
+                    actions.push(action(
+                        "install-go-make",
+                        "Install",
+                        ActionKind::Install,
+                        "make install",
+                        &workdir,
+                        None,
+                        ActionSource::Inferred,
+                    ));
                 }
                 let run_command = if make_targets.contains("run") {
                     "make run"
@@ -1132,8 +1216,24 @@ pub fn infer_actions(
                 } else {
                     "go build ./..."
                 };
-                actions.push(action("run-go", "Run", ActionKind::Run, run_command, &workdir, port_hint, ActionSource::Inferred));
-                actions.push(action("build-go", "Build", ActionKind::Build, build_command, &workdir, None, ActionSource::Inferred));
+                actions.push(action(
+                    "run-go",
+                    "Run",
+                    ActionKind::Run,
+                    run_command,
+                    &workdir,
+                    port_hint,
+                    ActionSource::Inferred,
+                ));
+                actions.push(action(
+                    "build-go",
+                    "Build",
+                    ActionKind::Build,
+                    build_command,
+                    &workdir,
+                    None,
+                    ActionSource::Inferred,
+                ));
             }
             RuntimeKind::Compose => {}
             RuntimeKind::Unknown | RuntimeKind::Node => {}
@@ -1230,7 +1330,11 @@ fn infer_auxiliary_root_actions(
     actions
 }
 
-fn infer_make_actions(root: &Path, runtime_kind: &RuntimeKind, port_hint: Option<u16>) -> Vec<ProjectAction> {
+fn infer_make_actions(
+    root: &Path,
+    runtime_kind: &RuntimeKind,
+    port_hint: Option<u16>,
+) -> Vec<ProjectAction> {
     if matches!(runtime_kind, RuntimeKind::Go) {
         return Vec::new();
     }
@@ -1269,11 +1373,7 @@ fn infer_make_actions(root: &Path, runtime_kind: &RuntimeKind, port_hint: Option
                 kind,
                 &format!("make {target}"),
                 &workdir,
-                if is_run {
-                    port_hint
-                } else {
-                    None
-                },
+                if is_run { port_hint } else { None },
                 ActionSource::Inferred,
             ));
         }
@@ -1342,14 +1442,18 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
         Regex::new(r"`(docker compose [^`]+)`").expect("regex"),
         Regex::new(r"`(python -m [^`]+)`").expect("regex"),
         Regex::new(r"`(uv (?:sync|run [^`]+))`").expect("regex"),
-        Regex::new(r"`([a-z0-9][\w-]*\s+(?:serve|start|dev|gateway)(?:\s+[^`]+)?)`").expect("regex"),
+        Regex::new(r"`([a-z0-9][\w-]*\s+(?:serve|start|dev|gateway)(?:\s+[^`]+)?)`")
+            .expect("regex"),
     ];
 
     let mut hints = Vec::new();
     let mut seen = HashSet::new();
     for pattern in patterns {
         for capture in pattern.captures_iter(&contents) {
-            let Some(command) = capture.get(1).map(|value| value.as_str().trim().to_string()) else {
+            let Some(command) = capture
+                .get(1)
+                .map(|value| value.as_str().trim().to_string())
+            else {
                 continue;
             };
             if seen.insert(command.clone()) {
@@ -1376,7 +1480,11 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
     }
 
     hints.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    hints.into_iter().map(|(_, command)| command).take(4).collect()
+    hints
+        .into_iter()
+        .map(|(_, command)| command)
+        .take(4)
+        .collect()
 }
 
 fn looks_like_readme_command_hint(line: &str) -> bool {
@@ -1402,13 +1510,7 @@ fn looks_like_readme_command_hint(line: &str) -> bool {
     .any(|prefix| line.starts_with(prefix));
 
     let contains_runtime = [
-        " install",
-        " dev",
-        " start",
-        " preview",
-        " serve",
-        " gateway",
-        " run",
+        " install", " dev", " start", " preview", " serve", " gateway", " run",
     ]
     .iter()
     .any(|needle| line.contains(needle));
@@ -1477,7 +1579,10 @@ fn should_skip_dir(path: &Path) -> bool {
 }
 
 fn first_existing(root: &Path, names: &[&str]) -> Option<PathBuf> {
-    names.iter().map(|name| root.join(name)).find(|path| path.exists())
+    names
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.exists())
 }
 
 pub fn find_compose_file(root: &Path) -> Option<PathBuf> {
@@ -1520,7 +1625,10 @@ fn read_package_name(root: &Path) -> Option<String> {
 fn read_package_manager(root: &Path) -> Option<String> {
     let contents = fs::read_to_string(root.join("package.json")).ok()?;
     let value: Value = serde_json::from_str(&contents).ok()?;
-    value.get("packageManager")?.as_str().map(ToString::to_string)
+    value
+        .get("packageManager")?
+        .as_str()
+        .map(ToString::to_string)
 }
 
 fn detect_package_manager(root: &Path) -> PackageManager {
@@ -1619,7 +1727,11 @@ fn expand_workspace_pattern(root: &Path, pattern: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let prefix = normalized.split('*').next().unwrap_or_default().trim_end_matches('/');
+    let prefix = normalized
+        .split('*')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
     let base = root.join(prefix);
     let Ok(entries) = fs::read_dir(base) else {
         return Vec::new();
@@ -1786,10 +1898,18 @@ fn score_target(root: &Path, target: &DetectedAppTarget) -> i32 {
     if root_name.contains(&name) || name.contains(&root_name) {
         score += 1;
     }
-    if target.available_actions.iter().any(|action| action == "dev" || action == "start" || action == "run") {
+    if target
+        .available_actions
+        .iter()
+        .any(|action| action == "dev" || action == "start" || action == "run")
+    {
         score += 2;
     }
-    if target.available_actions.iter().any(|action| action == "build") {
+    if target
+        .available_actions
+        .iter()
+        .any(|action| action == "build")
+    {
         score += 1;
     }
     if matches!(target.runtime_kind, RuntimeKind::Node) {
@@ -1816,7 +1936,10 @@ fn target_available_actions(target_path: &Path, runtime_kind: &RuntimeKind) -> V
         RuntimeKind::Rust => vec!["run".to_string(), "build".to_string()],
         RuntimeKind::Go => {
             let make_targets = read_make_targets(target_path);
-            if make_targets.contains("run") || make_targets.contains("build") || make_targets.contains("install") {
+            if make_targets.contains("run")
+                || make_targets.contains("build")
+                || make_targets.contains("install")
+            {
                 let mut actions = Vec::new();
                 if make_targets.contains("install") {
                     actions.push("install".to_string());
@@ -1977,7 +2100,11 @@ fn read_make_targets(root: &Path) -> HashSet<String> {
         let mut targets = HashSet::new();
         for line in contents.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('.') || trimmed.starts_with('\t') {
+            if trimmed.is_empty()
+                || trimmed.starts_with('#')
+                || trimmed.starts_with('.')
+                || trimmed.starts_with('\t')
+            {
                 continue;
             }
             let Some((target, _rest)) = trimmed.split_once(':') else {
@@ -2033,7 +2160,10 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
         };
         for pattern in &patterns {
             if let Some(capture) = pattern.captures(&contents) {
-                if let Some(port) = capture.get(1).and_then(|value| value.as_str().parse::<u16>().ok()) {
+                if let Some(port) = capture
+                    .get(1)
+                    .and_then(|value| value.as_str().parse::<u16>().ok())
+                {
                     return Some(port);
                 }
             }
@@ -2226,9 +2356,15 @@ JSON_PAYLOAD={"a":1}
             &[],
         );
 
-        assert!(actions.iter().any(|action| action.command == "pnpm install"));
-        assert!(actions.iter().any(|action| action.command == "pnpm run dev"));
-        assert!(actions.iter().any(|action| action.command == "pnpm run build"));
+        assert!(actions
+            .iter()
+            .any(|action| action.command == "pnpm install"));
+        assert!(actions
+            .iter()
+            .any(|action| action.command == "pnpm run dev"));
+        assert!(actions
+            .iter()
+            .any(|action| action.command == "pnpm run build"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2294,7 +2430,9 @@ build:
             &[],
         );
 
-        assert!(actions.iter().any(|action| action.command == "make install"));
+        assert!(actions
+            .iter()
+            .any(|action| action.command == "make install"));
         assert!(actions.iter().any(|action| action.command == "make run"));
         assert!(actions.iter().any(|action| action.command == "make build"));
 
@@ -2317,7 +2455,11 @@ build:
         )
         .unwrap();
         fs::write(root.join("bun.lock"), "").unwrap();
-        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("backend/pyproject.toml"),
+            "[project]\nname='backend'\n",
+        )
+        .unwrap();
         fs::write(
             root.join("frontend/package.json"),
             r#"{
@@ -2331,8 +2473,12 @@ build:
 
         let targets = detect_workspace_targets(&root);
         assert_eq!(targets.len(), 2);
-        assert!(targets.iter().any(|target| target.relative_path == "backend"));
-        assert!(targets.iter().any(|target| target.relative_path == "frontend"));
+        assert!(targets
+            .iter()
+            .any(|target| target.relative_path == "backend"));
+        assert!(targets
+            .iter()
+            .any(|target| target.relative_path == "frontend"));
         assert_eq!(targets[0].relative_path, "frontend");
 
         let _ = fs::remove_dir_all(root);
@@ -2354,7 +2500,11 @@ build:
         )
         .unwrap();
         fs::write(root.join("bun.lock"), "").unwrap();
-        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("backend/pyproject.toml"),
+            "[project]\nname='backend'\n",
+        )
+        .unwrap();
         fs::write(
             root.join("frontend/package.json"),
             r#"{
@@ -2388,7 +2538,11 @@ build:
         )
         .unwrap();
         fs::write(root.join("bun.lock"), "").unwrap();
-        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("backend/pyproject.toml"),
+            "[project]\nname='backend'\n",
+        )
+        .unwrap();
         fs::write(
             root.join("frontend/package.json"),
             r#"{
@@ -2429,12 +2583,33 @@ build:
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         assert_eq!(project.primary_target_id.as_deref(), Some("backend"));
         assert_eq!(project.preferred_port, Some(5123));
-        assert!(project.detected_files.iter().any(|item| item == ".portpilot.json"));
-        assert!(project.env_template.iter().any(|field| field.key == "API_TOKEN"));
-        assert_eq!(project.readme_hints.first().map(String::as_str), Some("uv run backend.app:app"));
-        assert_eq!(project.workspace_targets.first().map(|target| target.id.as_str()), Some("backend"));
-        assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
-        assert_eq!(project.project_profile.required_services, vec!["gateway".to_string()]);
+        assert!(project
+            .detected_files
+            .iter()
+            .any(|item| item == ".portpilot.json"));
+        assert!(project
+            .env_template
+            .iter()
+            .any(|field| field.key == "API_TOKEN"));
+        assert_eq!(
+            project.readme_hints.first().map(String::as_str),
+            Some("uv run backend.app:app")
+        );
+        assert_eq!(
+            project
+                .workspace_targets
+                .first()
+                .map(|target| target.id.as_str()),
+            Some("backend")
+        );
+        assert_eq!(
+            project.project_profile.kind,
+            ProjectProfileKind::GatewayStack
+        );
+        assert_eq!(
+            project.project_profile.required_services,
+            vec!["gateway".to_string()]
+        );
         assert_eq!(project.project_profile.known_ports, vec![5123, 8123]);
 
         let _ = fs::remove_dir_all(root);
@@ -2490,8 +2665,9 @@ open-webui serve
 
     #[test]
     fn smokes_real_public_repositories_when_local_clones_are_present() {
-        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
-            .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
+        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT").unwrap_or_else(|_| {
+            "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string()
+        });
         let repo_root = Path::new(&selftest_root);
         if !repo_root.exists() {
             return;
@@ -2529,7 +2705,10 @@ open-webui serve
 
             match repo {
                 "vitesse" => assert!(
-                    project.actions.iter().any(|action| action.command.starts_with("pnpm ")),
+                    project
+                        .actions
+                        .iter()
+                        .any(|action| action.command.starts_with("pnpm ")),
                     "expected pnpm commands for vitesse"
                 ),
                 "turborepo-shadcn-ui" => assert!(
@@ -2537,7 +2716,8 @@ open-webui serve
                     "expected a recommended primary target for turborepo-shadcn-ui"
                 ),
                 "example-voting-app" => assert!(
-                    project.has_docker_compose && project.project_profile.kind == ProjectProfileKind::ComposeStack,
+                    project.has_docker_compose
+                        && project.project_profile.kind == ProjectProfileKind::ComposeStack,
                     "expected compose profile detection for example-voting-app"
                 ),
                 "SillyTavern" => {
@@ -2552,7 +2732,10 @@ open-webui serve
                     );
                 }
                 "open-webui" => {
-                    assert!(project.has_docker_compose, "expected compose detection for open-webui");
+                    assert!(
+                        project.has_docker_compose,
+                        "expected compose detection for open-webui"
+                    );
                     assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
                     assert!(
                         project
@@ -2571,14 +2754,24 @@ open-webui serve
                         "expected serve hint for open-webui"
                     );
                     assert!(
-                        project.project_profile.required_services.iter().any(|service| service == "open-webui"),
+                        project
+                            .project_profile
+                            .required_services
+                            .iter()
+                            .any(|service| service == "open-webui"),
                         "expected open-webui service requirement"
                     );
                 }
                 "openclaw" => {
-                    assert!(project.has_docker_compose, "expected compose detection for openclaw");
+                    assert!(
+                        project.has_docker_compose,
+                        "expected compose detection for openclaw"
+                    );
                     assert_eq!(project.preferred_port, Some(18789));
-                    assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
+                    assert_eq!(
+                        project.project_profile.kind,
+                        ProjectProfileKind::GatewayStack
+                    );
                     assert!(
                         project
                             .actions
@@ -2600,9 +2793,15 @@ open-webui serve
                     assert_eq!(project.project_profile.known_ports, vec![18789, 18790]);
                 }
                 "LibreChat" => {
-                    assert!(project.has_docker_compose, "expected compose detection for LibreChat");
+                    assert!(
+                        project.has_docker_compose,
+                        "expected compose detection for LibreChat"
+                    );
                     assert_eq!(project.preferred_port, Some(3080));
-                    assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
+                    assert_eq!(
+                        project.project_profile.kind,
+                        ProjectProfileKind::GatewayStack
+                    );
                     assert!(
                         project
                             .project_profile
@@ -2612,17 +2811,19 @@ open-webui serve
                         "expected LibreChat services to be inferred"
                     );
                     assert!(
-                        project
-                            .actions
-                            .iter()
-                            .any(|action| action.command.contains("frontend:dev")
-                                || action.command.contains("backend:dev")
-                                || action.command.contains("compose up")),
+                        project.actions.iter().any(|action| action
+                            .command
+                            .contains("frontend:dev")
+                            || action.command.contains("backend:dev")
+                            || action.command.contains("compose up")),
                         "expected LibreChat runnable entrypoint"
                     );
                 }
                 "anything-llm" => {
-                    assert!(project.has_docker_compose, "expected compose detection for anything-llm");
+                    assert!(
+                        project.has_docker_compose,
+                        "expected compose detection for anything-llm"
+                    );
                     assert_eq!(project.preferred_port, Some(3001));
                     assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
                     assert!(
@@ -2642,7 +2843,10 @@ open-webui serve
                     );
                 }
                 "Flowise" => {
-                    assert!(project.has_docker_compose, "expected compose detection for Flowise");
+                    assert!(
+                        project.has_docker_compose,
+                        "expected compose detection for Flowise"
+                    );
                     assert_eq!(project.preferred_port, Some(3000));
                     assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
                     assert!(
@@ -2654,10 +2858,7 @@ open-webui serve
                         "expected Flowise start entrypoint"
                     );
                     assert!(
-                        project
-                            .env_template
-                            .iter()
-                            .any(|field| field.key == "PORT"),
+                        project.env_template.iter().any(|field| field.key == "PORT"),
                         "expected Flowise compose env requirements"
                     );
                 }
@@ -2686,20 +2887,28 @@ open-webui serve
 
     #[test]
     fn applies_recipe_overrides_for_real_public_repo_when_present() {
-        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
-            .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
+        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT").unwrap_or_else(|_| {
+            "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string()
+        });
         let path = Path::new(&selftest_root).join("vitesse");
         if !path.join(".portpilot.json").exists() {
             return;
         }
 
-        let project = infer_project_from_path(&path, None, 42300).expect("expected vitesse inference");
+        let project =
+            infer_project_from_path(&path, None, 42300).expect("expected vitesse inference");
         assert_eq!(project.preferred_port, Some(4517));
-        assert!(project.env_template.iter().any(|field| field.key == "VITE_SELFTEST"));
+        assert!(project
+            .env_template
+            .iter()
+            .any(|field| field.key == "VITE_SELFTEST"));
         assert_eq!(
             project.readme_hints.first().map(String::as_str),
             Some("pnpm run dev -- --host 127.0.0.1 --port 4517")
         );
-        assert!(project.detected_files.iter().any(|item| item == ".portpilot.json"));
+        assert!(project
+            .detected_files
+            .iter()
+            .any(|item| item == ".portpilot.json"));
     }
 }

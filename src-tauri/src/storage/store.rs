@@ -41,7 +41,9 @@ impl ProjectStore {
 
     pub fn replace_workspace_roots(&self, roots: &[String]) -> Result<(), String> {
         let mut connection = self.connect()?;
-        let tx = connection.transaction().map_err(|error| error.to_string())?;
+        let tx = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
         tx.execute("DELETE FROM workspace_roots", [])
             .map_err(|error| error.to_string())?;
         for (index, root) in roots.iter().enumerate() {
@@ -65,8 +67,8 @@ impl ProjectStore {
         let mut projects = Vec::new();
         for row in rows {
             let payload = row.map_err(|error| error.to_string())?;
-            let project =
-                serde_json::from_str::<ManagedProject>(&payload).map_err(|error| error.to_string())?;
+            let project = serde_json::from_str::<ManagedProject>(&payload)
+                .map_err(|error| error.to_string())?;
             projects.push(project);
         }
         Ok(projects)
@@ -84,7 +86,9 @@ impl ProjectStore {
             .map_err(|error| error.to_string())?;
 
         payload
-            .map(|value| serde_json::from_str::<ManagedProject>(&value).map_err(|error| error.to_string()))
+            .map(|value| {
+                serde_json::from_str::<ManagedProject>(&value).map_err(|error| error.to_string())
+            })
             .transpose()
     }
 
@@ -149,7 +153,8 @@ impl ProjectStore {
         for row in rows {
             let payload = row.map_err(|error| error.to_string())?;
             executions.push(
-                serde_json::from_str::<ActionExecution>(&payload).map_err(|error| error.to_string())?,
+                serde_json::from_str::<ActionExecution>(&payload)
+                    .map_err(|error| error.to_string())?,
             );
         }
         Ok(executions)
@@ -190,7 +195,10 @@ impl ProjectStore {
 
     pub fn normalize_stale_runtime_state(&self) -> Result<(), String> {
         for project in self.list()? {
-            if matches!(project.status, RuntimeStatus::Running | RuntimeStatus::Starting) {
+            if matches!(
+                project.status,
+                RuntimeStatus::Running | RuntimeStatus::Starting
+            ) {
                 let _ = self.update(&project.id, |item| {
                     item.status = RuntimeStatus::Stopped;
                     item.updated_at = chrono::Utc::now().to_rfc3339();

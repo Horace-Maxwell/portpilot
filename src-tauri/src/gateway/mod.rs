@@ -19,7 +19,8 @@ struct GatewayState {
 }
 
 pub async fn start_gateway(store: Arc<ProjectStore>) -> Result<u16, String> {
-    let port = choose_gateway_port(42300).ok_or_else(|| "Could not find a free gateway port.".to_string())?;
+    let port = choose_gateway_port(42300)
+        .ok_or_else(|| "Could not find a free gateway port.".to_string())?;
     let state = GatewayState {
         client: Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -95,7 +96,10 @@ async fn proxy_host(
         .to_string();
 
     if slug.is_empty() || slug == "gateway" {
-        return response_text(StatusCode::NOT_FOUND, "No PortPilot route matched this host.");
+        return response_text(
+            StatusCode::NOT_FOUND,
+            "No PortPilot route matched this host.",
+        );
     }
 
     proxy_to_slug(state, method, headers, request, &slug, "").await
@@ -110,7 +114,10 @@ async fn proxy_to_slug(
     rest: &str,
 ) -> Response<Body> {
     let Ok(projects) = state.store.list() else {
-        return response_text(StatusCode::INTERNAL_SERVER_ERROR, "PortPilot could not read the project registry.");
+        return response_text(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PortPilot could not read the project registry.",
+        );
     };
 
     let Some(project) = projects.into_iter().find(|item| item.slug == slug) else {
@@ -118,7 +125,10 @@ async fn proxy_to_slug(
     };
 
     let Some(port) = project.resolved_port.or(project.preferred_port) else {
-        return response_text(StatusCode::SERVICE_UNAVAILABLE, "Project does not have an active target port yet.");
+        return response_text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Project does not have an active target port yet.",
+        );
     };
 
     let path = if rest.is_empty() {
@@ -127,7 +137,11 @@ async fn proxy_to_slug(
         format!("/{}", rest)
     };
 
-    let query = request.uri().query().map(|value| format!("?{value}")).unwrap_or_default();
+    let query = request
+        .uri()
+        .query()
+        .map(|value| format!("?{value}"))
+        .unwrap_or_default();
     let target_url = format!("http://127.0.0.1:{port}{path}{query}");
     let body = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(bytes) => bytes,
@@ -175,7 +189,12 @@ async fn proxy_to_slug(
     }
     outgoing
         .body(Body::from(response_body))
-        .unwrap_or_else(|_| response_text(StatusCode::BAD_GATEWAY, "Gateway failed to build the response body."))
+        .unwrap_or_else(|_| {
+            response_text(
+                StatusCode::BAD_GATEWAY,
+                "Gateway failed to build the response body.",
+            )
+        })
 }
 
 fn response_text(status: StatusCode, message: &str) -> Response<Body> {

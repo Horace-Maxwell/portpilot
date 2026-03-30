@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::core::inference::{
-    find_compose_file, infer_project_from_path, now_iso, parse_env_template, repo_name_from_git_url,
-    scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
+    find_compose_file, infer_project_from_path, now_iso, parse_env_template,
+    repo_name_from_git_url, scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
 };
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
@@ -54,7 +54,10 @@ fn list_workspace_roots(state: State<'_, AppState>) -> Result<Vec<String>, Strin
 }
 
 #[tauri::command]
-fn set_workspace_roots(state: State<'_, AppState>, roots: Vec<String>) -> Result<Vec<String>, String> {
+fn set_workspace_roots(
+    state: State<'_, AppState>,
+    roots: Vec<String>,
+) -> Result<Vec<String>, String> {
     let normalized = if roots.is_empty() {
         vec![DEFAULT_WORKSPACE_ROOT.to_string()]
     } else {
@@ -104,13 +107,19 @@ fn register_local_project(
 }
 
 #[tauri::command]
-fn list_project_actions(state: State<'_, AppState>, project_id: String) -> Result<Vec<ProjectAction>, String> {
+fn list_project_actions(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<ProjectAction>, String> {
     let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     Ok(project.actions)
 }
 
 #[tauri::command]
-fn get_env_template(state: State<'_, AppState>, project_id: String) -> Result<Vec<EnvTemplateField>, String> {
+fn get_env_template(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<EnvTemplateField>, String> {
     let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     if !project.env_template.is_empty() {
         return Ok(project.env_template);
@@ -536,7 +545,9 @@ fn import_repo_from_git(
 
     let gateway_port = *state.gateway_port.lock();
     let project = infer_project_from_path(Path::new(&destination), Some(url), gateway_port)
-        .ok_or_else(|| "PortPilot cloned the repo, but could not infer a supported project.".to_string())?;
+        .ok_or_else(|| {
+            "PortPilot cloned the repo, but could not infer a supported project.".to_string()
+        })?;
     state.store.upsert(project.clone())?;
 
     app.emit(
@@ -808,7 +819,11 @@ fn primary_run_action(project: &ManagedProject) -> Option<&ProjectAction> {
         .find(|action| matches!(action.kind, ActionKind::Run))
 }
 
-fn fresh_project(store: &Arc<ProjectStore>, project_id: &str, gateway_port: u16) -> Result<ManagedProject, String> {
+fn fresh_project(
+    store: &Arc<ProjectStore>,
+    project_id: &str,
+    gateway_port: u16,
+) -> Result<ManagedProject, String> {
     let project = store
         .get(project_id)?
         .ok_or_else(|| "Project not found.".to_string())?;
@@ -902,17 +917,22 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
         .iter()
         .find(|action| matches!(action.kind, ActionKind::Open))
         .map(|action| action.id.clone());
-    let primary_target = project
-        .primary_target_id
-        .as_ref()
-        .and_then(|target_id| project.workspace_targets.iter().find(|target| &target.id == target_id));
+    let primary_target = project.primary_target_id.as_ref().and_then(|target_id| {
+        project
+            .workspace_targets
+            .iter()
+            .find(|target| &target.id == target_id)
+    });
 
     let env_values = merged_env_values(project);
     let missing_env_keys = project
         .env_template
         .iter()
         .filter_map(|field| {
-            let value = env_values.get(&field.key).map(|value| value.trim()).unwrap_or("");
+            let value = env_values
+                .get(&field.key)
+                .map(|value| value.trim())
+                .unwrap_or("");
             if value.is_empty() {
                 Some(field.key.clone())
             } else {
@@ -926,7 +946,14 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
     let port_conflicts = project_port_conflicts(project);
     let compose_requirements = build_compose_requirements(project, &env_values);
     let port = port_check(project, &port_conflicts);
-    let blockers = build_doctor_blockers(&tooling, &env, &install, &port_conflicts, &compose_requirements);
+    let blockers = build_doctor_blockers(
+        &tooling,
+        &env,
+        &install,
+        &port_conflicts,
+        &compose_requirements,
+        &project.project_profile.required_env_groups,
+    );
 
     let mut checks = Vec::new();
     checks.push(tooling);
@@ -945,31 +972,33 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
             summary: format!(
                 "Detected {} runnable app target{} inside this repo.",
                 project.workspace_targets.len(),
-                if project.workspace_targets.len() == 1 { "" } else { "s" }
-            ),
-            detail: Some(
-                if let Some(target) = primary_target {
-                    format!(
-                        "Recommended target: {} ({}) | Other targets: {}",
-                        target.name,
-                        target.relative_path,
-                        project
-                            .workspace_targets
-                            .iter()
-                            .filter(|item| item.id != target.id)
-                            .map(|item| format!("{} ({})", item.name, item.relative_path))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                if project.workspace_targets.len() == 1 {
+                    ""
                 } else {
+                    "s"
+                }
+            ),
+            detail: Some(if let Some(target) = primary_target {
+                format!(
+                    "Recommended target: {} ({}) | Other targets: {}",
+                    target.name,
+                    target.relative_path,
                     project
                         .workspace_targets
                         .iter()
-                        .map(|target| format!("{} ({})", target.name, target.relative_path))
+                        .filter(|item| item.id != target.id)
+                        .map(|item| format!("{} ({})", item.name, item.relative_path))
                         .collect::<Vec<_>>()
                         .join(", ")
-                },
-            ),
+                )
+            } else {
+                project
+                    .workspace_targets
+                    .iter()
+                    .map(|target| format!("{} ({})", target.name, target.relative_path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
             fix_label: None,
             fix_command: None,
         });
@@ -1017,8 +1046,26 @@ fn recommend_next_step(
     }
 
     if !missing_env_keys.is_empty() {
-        if compose_requirements.iter().any(|item| item.kind == "env" && !item.ready) {
-            return Some("Fill in the required compose env values before starting this stack.".to_string());
+        if compose_requirements
+            .iter()
+            .any(|item| item.kind == "env" && !item.ready)
+        {
+            let groups = if project.project_profile.required_env_groups.is_empty() {
+                None
+            } else {
+                Some(project.project_profile.required_env_groups.join(", "))
+            };
+            return Some(
+                match groups {
+                    Some(groups) => format!(
+                        "Fill in the required compose env values for {groups} before starting this stack."
+                    ),
+                    None => {
+                        "Fill in the required compose env values before starting this stack."
+                            .to_string()
+                    }
+                },
+            );
         }
         return Some(format!(
             "Fill in {} missing environment value{} before running.",
@@ -1027,7 +1074,10 @@ fn recommend_next_step(
         ));
     }
 
-    if port_conflicts.iter().any(|conflict| conflict.occupied && !conflict.can_auto_reassign) {
+    if port_conflicts
+        .iter()
+        .any(|conflict| conflict.occupied && !conflict.can_auto_reassign)
+    {
         let port = port_conflicts
             .iter()
             .find(|conflict| conflict.occupied && !conflict.can_auto_reassign)
@@ -1042,29 +1092,49 @@ fn recommend_next_step(
         .iter()
         .any(|item| item.kind == "service" && !item.ready)
     {
-        return Some("Start the required compose services first, then run the recommended entrypoint.".to_string());
+        return Some(
+            "Start the required compose services first, then run the recommended entrypoint."
+                .to_string(),
+        );
+    }
+
+    if compose_requirements
+        .iter()
+        .any(|item| item.kind == "local-service" && !item.ready)
+    {
+        return missing_service_action_hint(project)
+            .or_else(|| Some("Start the required local services first.".to_string()));
     }
 
     if matches!(project.status, RuntimeStatus::Running) {
         return Some("Open the live route or inspect the runtime panel.".to_string());
     }
 
-    if let Some(target) = project
-        .primary_target_id
-        .as_ref()
-        .and_then(|target_id| project.workspace_targets.iter().find(|item| &item.id == target_id))
-    {
+    if let Some(target) = project.primary_target_id.as_ref().and_then(|target_id| {
+        project
+            .workspace_targets
+            .iter()
+            .find(|item| &item.id == target_id)
+    }) {
         return Some(format!(
             "Start the recommended target {} in {}.",
             target.name, target.relative_path
         ));
     }
 
-    if project.actions.iter().any(|action| matches!(action.kind, ActionKind::Install)) {
+    if project
+        .actions
+        .iter()
+        .any(|action| matches!(action.kind, ActionKind::Install))
+    {
         return Some("Run install first, then start the primary action.".to_string());
     }
 
-    if project.actions.iter().any(|action| matches!(action.kind, ActionKind::Run)) {
+    if project
+        .actions
+        .iter()
+        .any(|action| matches!(action.kind, ActionKind::Run))
+    {
         return Some("Start the primary run action to bring this repo online.".to_string());
     }
 
@@ -1090,31 +1160,39 @@ fn build_runtime_node(
         })
         .unwrap_or_default();
 
-    let services = if project.has_docker_compose {
-        collect_compose_services(project)
-    } else {
-        Vec::new()
-    };
+    let services = runtime_services_for_project(project);
     let dependencies_ready = dependencies_ready(project, &services);
-    let run_phase = current_execution.map(|execution| infer_run_phase(execution, &execution_logs, dependencies_ready));
+    let run_phase = current_execution
+        .map(|execution| infer_run_phase(execution, &execution_logs, dependencies_ready));
     let health = current_execution.and_then(|execution| {
-        let port = execution.resolved_port.or(project.resolved_port).or(project.preferred_port);
+        let port = execution
+            .resolved_port
+            .or(project.resolved_port)
+            .or(project.preferred_port);
         let url = port.map(|value| format!("http://127.0.0.1:{value}/"));
-        let ready_from_logs = execution_logs.iter().rev().any(|entry| is_ready_signal(&entry.message));
+        let ready_from_logs = execution_logs
+            .iter()
+            .rev()
+            .any(|entry| is_ready_signal(&entry.message));
         let ready = port.map(port_is_open).unwrap_or(false) || ready_from_logs;
         let readiness_reason = if ready {
             Some("Port opened or the process emitted a ready signal.".to_string())
         } else if !dependencies_ready {
             Some("Required local services are not ready yet.".to_string())
         } else if execution.status == crate::core::models::ExecutionStatus::Running {
-            Some("The process is still booting and has not exposed a healthy route yet.".to_string())
+            Some(
+                "The process is still booting and has not exposed a healthy route yet.".to_string(),
+            )
         } else {
             None
         };
         let summary = if ready {
             Some("Route is reachable and the process looks ready.".to_string())
         } else if !dependencies_ready {
-            Some("Waiting for supporting services before this project can be considered healthy.".to_string())
+            Some(
+                "Waiting for supporting services before this project can be considered healthy."
+                    .to_string(),
+            )
         } else if execution.status == crate::core::models::ExecutionStatus::Running {
             Some("Waiting for the project to bind a port or emit a ready signal.".to_string())
         } else {
@@ -1149,7 +1227,10 @@ fn build_runtime_node(
     }
 }
 
-fn runtime_recommended_action(project: &ManagedProject, dependencies_ready: bool) -> Option<String> {
+fn runtime_recommended_action(
+    project: &ManagedProject,
+    dependencies_ready: bool,
+) -> Option<String> {
     if !dependencies_ready {
         if let Some(message) = missing_service_action_hint(project) {
             return Some(message);
@@ -1164,8 +1245,15 @@ fn runtime_recommended_action(project: &ManagedProject, dependencies_ready: bool
     }
 
     if let Some(action_id) = &project.project_profile.preferred_entrypoint {
-        if let Some(action) = project.actions.iter().find(|action| &action.id == action_id) {
-            return Some(format!("Run {} to bring this project online.", action.label));
+        if let Some(action) = project
+            .actions
+            .iter()
+            .find(|action| &action.id == action_id)
+        {
+            return Some(format!(
+                "Run {} to bring this project online.",
+                action.label
+            ));
         }
     }
 
@@ -1182,7 +1270,11 @@ fn dependencies_ready(project: &ManagedProject, services: &[ComposeServiceStatus
             .project_profile
             .required_services
             .iter()
-            .all(|required| known_local_service_port(required).map(port_is_open).unwrap_or(true));
+            .all(|required| {
+                known_local_service_port(required)
+                    .map(port_is_open)
+                    .unwrap_or(true)
+            });
     }
 
     if project.project_profile.required_services.is_empty() {
@@ -1209,7 +1301,10 @@ fn build_compose_requirements(
     let required_services = if !project.project_profile.required_services.is_empty() {
         project.project_profile.required_services.clone()
     } else if project.has_docker_compose {
-        services.iter().map(|service| service.name.clone()).collect::<Vec<_>>()
+        services
+            .iter()
+            .map(|service| service.name.clone())
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -1218,30 +1313,37 @@ fn build_compose_requirements(
         let service = services.iter().find(|item| item.name == service_name);
         let known_local_port = known_local_service_port(&service_name);
         let ready = service_dependency_ready(&service_name, &services);
-        let detail = service.map(|item| {
-            let mut details = Vec::new();
-            if let Some(state) = &item.state {
-                details.push(format!("state: {state}"));
-            }
-            if let Some(health) = &item.health {
-                details.push(format!("health: {health}"));
-            }
-            if !item.published_ports.is_empty() {
-                details.push(format!("ports: {}", item.published_ports.join(", ")));
-            }
-            details.join(" | ")
-        }).or_else(|| {
-            known_local_port.map(|port| {
-                format!(
-                    "Expected local service on 127.0.0.1:{port}. {}",
-                    known_local_service_hint(&service_name)
-                        .unwrap_or("Start the dependency before launching the main app.")
-                )
+        let detail = service
+            .map(|item| {
+                let mut details = Vec::new();
+                if let Some(state) = &item.state {
+                    details.push(format!("state: {state}"));
+                }
+                if let Some(health) = &item.health {
+                    details.push(format!("health: {health}"));
+                }
+                if !item.published_ports.is_empty() {
+                    details.push(format!("ports: {}", item.published_ports.join(", ")));
+                }
+                details.join(" | ")
             })
-        });
+            .or_else(|| {
+                known_local_port.map(|port| {
+                    let hint = known_local_service_hint(&service_name)
+                        .unwrap_or("Start the dependency before launching the main app.");
+                    let start = local_service_start_command(&service_name)
+                        .map(|command| format!(" Suggested start: {command}"))
+                        .unwrap_or_default();
+                    format!("Expected local service on 127.0.0.1:{port}. {hint}{start}")
+                })
+            });
 
         requirements.push(ComposeRequirement {
-            kind: if service.is_some() || project.has_docker_compose {
+            kind: if service.is_some() {
+                "service".to_string()
+            } else if known_local_port.is_some() {
+                "local-service".to_string()
+            } else if project.has_docker_compose {
                 "service".to_string()
             } else {
                 "local-service".to_string()
@@ -1253,16 +1355,13 @@ fn build_compose_requirements(
     }
 
     if project.has_docker_compose {
-        for field in project
-            .env_template
-            .iter()
-            .filter(|field| {
-                field.description
-                    .as_deref()
-                    .map(|detail| detail.contains("docker-compose"))
-                    .unwrap_or(false)
-            })
-        {
+        for field in project.env_template.iter().filter(|field| {
+            field
+                .description
+                .as_deref()
+                .map(|detail| detail.contains("docker-compose"))
+                .unwrap_or(false)
+        }) {
             let ready = env_values
                 .get(&field.key)
                 .map(|value| !value.trim().is_empty())
@@ -1271,7 +1370,9 @@ fn build_compose_requirements(
                 kind: "env".to_string(),
                 name: field.key.clone(),
                 ready,
-                detail: Some("Required for docker compose configuration or volume mapping.".to_string()),
+                detail: Some(
+                    "Required for docker compose configuration or volume mapping.".to_string(),
+                ),
             });
         }
     }
@@ -1285,6 +1386,7 @@ fn build_doctor_blockers(
     install: &DoctorCheck,
     port_conflicts: &[DoctorPortConflict],
     compose_requirements: &[ComposeRequirement],
+    required_env_groups: &[String],
 ) -> Vec<DoctorBlocker> {
     let mut blockers = Vec::new();
 
@@ -1325,7 +1427,10 @@ fn build_doctor_blockers(
         blockers.push(DoctorBlocker {
             id: "fixed-port-conflict".to_string(),
             label: "Fixed Port Conflict".to_string(),
-            summary: format!("Port {} is busy and this command cannot be auto-reassigned.", conflict.port),
+            summary: format!(
+                "Port {} is busy and this command cannot be auto-reassigned.",
+                conflict.port
+            ),
             fix_label: Some("Free the port".to_string()),
             fix_command: None,
         });
@@ -1337,14 +1442,27 @@ fn build_doctor_blockers(
         .map(|item| item.name.clone())
         .collect::<Vec<_>>();
     if !missing_compose_env.is_empty() {
+        let group_suffix = if required_env_groups.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " Related groups: {}.",
+                required_env_groups.join(", ")
+            )
+        };
         blockers.push(DoctorBlocker {
             id: "compose-env".to_string(),
             label: "Compose Env".to_string(),
             summary: format!(
-                "Compose is missing {} required env value{}: {}.",
+                "Compose is missing {} required env value{}: {}.{}",
                 missing_compose_env.len(),
-                if missing_compose_env.len() == 1 { "" } else { "s" },
-                missing_compose_env.join(", ")
+                if missing_compose_env.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                missing_compose_env.join(", "),
+                group_suffix
             ),
             fix_label: Some("Fill env values".to_string()),
             fix_command: None,
@@ -1357,16 +1475,21 @@ fn build_doctor_blockers(
         .map(|item| item.name.clone())
         .collect::<Vec<_>>();
     if !missing_local_services.is_empty() {
+        let primary_service = missing_local_services.first().cloned().unwrap_or_default();
         blockers.push(DoctorBlocker {
             id: "local-services".to_string(),
             label: "Local Services".to_string(),
             summary: format!(
                 "Start the required local service{} first: {}.",
-                if missing_local_services.len() == 1 { "" } else { "s" },
+                if missing_local_services.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
                 missing_local_services.join(", ")
             ),
-            fix_label: Some("Start local services".to_string()),
-            fix_command: None,
+            fix_label: Some("Suggested start".to_string()),
+            fix_command: local_service_start_command(&primary_service).map(ToString::to_string),
         });
     }
 
@@ -1383,16 +1506,25 @@ fn project_port_conflicts(project: &ManagedProject) -> Vec<DoctorPortConflict> {
         Duration::from_millis(250),
     )
     .is_ok();
+    let fixed_from_config = fixed_port_from_project_config(project);
     let can_auto_reassign = primary_run_action(project)
         .map(|action| fixed_port_from_command(&action.command).is_none())
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && fixed_from_config.is_none();
 
     vec![DoctorPortConflict {
         port,
         occupied,
         can_auto_reassign,
         detail: if occupied && !can_auto_reassign {
-            "This project hardcodes its port, so PortPilot cannot move it automatically.".to_string()
+            if let Some(config_path) = fixed_from_config {
+                format!(
+                    "This project hardcodes its port in {config_path}, so PortPilot cannot move it automatically."
+                )
+            } else {
+                "This project hardcodes its port, so PortPilot cannot move it automatically."
+                    .to_string()
+            }
         } else if occupied {
             "PortPilot can reassign this port when the primary run action starts.".to_string()
         } else {
@@ -1434,15 +1566,24 @@ fn collect_compose_services(project: &ManagedProject) -> Vec<ComposeServiceStatu
 fn query_compose_service_names(workdir: &str, compose_file: &Path) -> Vec<String> {
     let compose_file_str = compose_file.to_string_lossy().to_string();
     let commands = [
-        ("docker", vec!["compose", "-f", compose_file_str.as_str(), "config", "--services"]),
-        ("docker-compose", vec!["-f", compose_file_str.as_str(), "config", "--services"]),
+        (
+            "docker",
+            vec![
+                "compose",
+                "-f",
+                compose_file_str.as_str(),
+                "config",
+                "--services",
+            ],
+        ),
+        (
+            "docker-compose",
+            vec!["-f", compose_file_str.as_str(), "config", "--services"],
+        ),
     ];
 
     for (bin, args) in commands {
-        let output = Command::new(bin)
-            .args(args)
-            .current_dir(workdir)
-            .output();
+        let output = Command::new(bin).args(args).current_dir(workdir).output();
         let Ok(output) = output else {
             continue;
         };
@@ -1467,15 +1608,25 @@ fn query_compose_service_names(workdir: &str, compose_file: &Path) -> Vec<String
 fn query_compose_ps(workdir: &str, compose_file: &Path) -> Vec<ComposeServiceStatus> {
     let compose_file_str = compose_file.to_string_lossy().to_string();
     let commands = [
-        ("docker", vec!["compose", "-f", compose_file_str.as_str(), "ps", "--format", "json"]),
-        ("docker-compose", vec!["-f", compose_file_str.as_str(), "ps", "--format", "json"]),
+        (
+            "docker",
+            vec![
+                "compose",
+                "-f",
+                compose_file_str.as_str(),
+                "ps",
+                "--format",
+                "json",
+            ],
+        ),
+        (
+            "docker-compose",
+            vec!["-f", compose_file_str.as_str(), "ps", "--format", "json"],
+        ),
     ];
 
     for (bin, args) in commands {
-        let output = Command::new(bin)
-            .args(args)
-            .current_dir(workdir)
-            .output();
+        let output = Command::new(bin).args(args).current_dir(workdir).output();
         let Ok(output) = output else {
             continue;
         };
@@ -1614,7 +1765,11 @@ fn infer_run_phase(
         return RunPhase::Installing;
     }
 
-    if logs.iter().rev().any(|entry| is_ready_signal(&entry.message)) {
+    if logs
+        .iter()
+        .rev()
+        .any(|entry| is_ready_signal(&entry.message))
+    {
         return RunPhase::Healthy;
     }
 
@@ -1629,7 +1784,11 @@ fn infer_run_phase(
         return RunPhase::WaitingForPort;
     }
 
-    if logs.iter().rev().any(|entry| is_failure_signal(&entry.message)) {
+    if logs
+        .iter()
+        .rev()
+        .any(|entry| is_failure_signal(&entry.message))
+    {
         return RunPhase::Failed;
     }
 
@@ -1681,9 +1840,35 @@ fn known_local_service_hint(service_name: &str) -> Option<&'static str> {
         "mongodb" => Some("MongoDB must be available before the app can boot cleanly."),
         "meilisearch" => Some("Meilisearch is used for local indexing and search."),
         "redis" => Some("Redis is required for queue, cache, or worker coordination."),
-        "postgres" | "postgresql" | "db" => Some("Postgres is required for the primary app database."),
-        "qdrant" | "weaviate" | "chroma" | "vectordb" => Some("Vector storage should be online before the app is considered ready."),
+        "postgres" | "postgresql" | "db" => {
+            Some("Postgres is required for the primary app database.")
+        }
+        "qdrant" | "weaviate" | "chroma" | "vectordb" => {
+            Some("Vector storage should be online before the app is considered ready.")
+        }
         "rag_api" => Some("The RAG sidecar should be available before opening the main route."),
+        _ => None,
+    }
+}
+
+fn local_service_start_command(service_name: &str) -> Option<&'static str> {
+    match service_name.to_ascii_lowercase().as_str() {
+        "ollama" => Some("ollama serve"),
+        "mongodb" => Some("docker run -d --name mongodb -p 27017:27017 mongo:7"),
+        "meilisearch" => {
+            Some("docker run -d --name meilisearch -p 7700:7700 getmeili/meilisearch:v1.12")
+        }
+        "redis" => Some("docker run -d --name redis -p 6379:6379 redis:7"),
+        "postgres" | "postgresql" | "db" => Some(
+            "docker run -d --name postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16",
+        ),
+        "qdrant" => Some("docker run -d --name qdrant -p 6333:6333 qdrant/qdrant"),
+        "weaviate" => {
+            Some("docker run -d --name weaviate -p 8080:8080 semitechnologies/weaviate:latest")
+        }
+        "chroma" | "vectordb" => {
+            Some("docker run -d --name chroma -p 8000:8000 chromadb/chroma:latest")
+        }
         _ => None,
     }
 }
@@ -1702,18 +1887,52 @@ fn service_dependency_ready(service_name: &str, services: &[ComposeServiceStatus
         .unwrap_or(true)
 }
 
-fn missing_service_action_hint(project: &ManagedProject) -> Option<String> {
-    let services = if project.has_docker_compose {
+fn runtime_services_for_project(project: &ManagedProject) -> Vec<ComposeServiceStatus> {
+    let mut services = if project.has_docker_compose {
         collect_compose_services(project)
     } else {
         Vec::new()
     };
+
+    for required in &project.project_profile.required_services {
+        if services.iter().any(|service| service.name == *required) {
+            continue;
+        }
+
+        if let Some(port) = known_local_service_port(required) {
+            let running = port_is_open(port);
+            services.push(ComposeServiceStatus {
+                name: required.clone(),
+                state: Some(if running { "running" } else { "missing" }.to_string()),
+                health: Some("local dependency".to_string()),
+                container_name: None,
+                published_ports: vec![format!("127.0.0.1:{port}")],
+            });
+        }
+    }
+
+    services
+}
+
+fn missing_service_action_hint(project: &ManagedProject) -> Option<String> {
+    let services = runtime_services_for_project(project);
 
     let missing = project
         .project_profile
         .required_services
         .iter()
         .find(|service| !service_dependency_ready(service, &services))?;
+
+    if let Some(command) = local_service_start_command(missing) {
+        if let Some(port) = known_local_service_port(missing) {
+            return Some(format!(
+                "Start {missing} first (`{command}` on localhost:{port}), then run the recommended entrypoint."
+            ));
+        }
+        return Some(format!(
+            "Start {missing} first (`{command}`), then run the recommended entrypoint."
+        ));
+    }
 
     if let Some(port) = known_local_service_port(missing) {
         return Some(format!(
@@ -1749,17 +1968,56 @@ fn fixed_port_from_command(command: &str) -> Option<u16> {
     None
 }
 
+fn fixed_port_from_project_config(project: &ManagedProject) -> Option<String> {
+    let preferred_port = project.preferred_port?;
+    let root = Path::new(&project.root_path);
+    let candidates = ["config.yaml", "config.yml", "settings.json", "config/config.yaml"];
+    let yaml_pattern = regex::Regex::new(r"(?m)^\s*port:\s*(-?\d{1,5})\s*$").expect("regex");
+    let json_pattern =
+        regex::Regex::new(r#""port"\s*:\s*(-?\d{1,5})"#).expect("regex");
+
+    for relative in candidates {
+        let path = root.join(relative);
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+
+        let matched = yaml_pattern
+            .captures(&contents)
+            .and_then(|capture| capture.get(1))
+            .and_then(|value| value.as_str().parse::<i32>().ok())
+            .or_else(|| {
+                json_pattern
+                    .captures(&contents)
+                    .and_then(|capture| capture.get(1))
+                    .and_then(|value| value.as_str().parse::<i32>().ok())
+            });
+
+        let matches_preferred = matched == Some(i32::from(preferred_port));
+        let is_known_default = matched == Some(-1)
+            && preferred_port == 8000
+            && project.name.eq_ignore_ascii_case("SillyTavern");
+
+        if matches_preferred || is_known_default {
+            return Some(relative.to_string());
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_compose_requirements, fixed_port_from_command, infer_run_phase, known_local_service_hint,
-        known_local_service_port, now_iso, parse_compose_ps_json,
-        parse_compose_service_names_from_file, project_port_conflicts,
+        build_compose_requirements, fixed_port_from_command, fixed_port_from_project_config,
+        infer_run_phase,
+        known_local_service_hint, known_local_service_port, local_service_start_command, now_iso,
+        parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
     };
     use crate::core::models::{
         ActionExecution, ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField,
-        ManagedProject, ProjectAction, ProjectProfile,
-        ProjectProfileKind, ProjectKind, RunPhase, RuntimeKind, RuntimeStatus,
+        ManagedProject, ProjectAction, ProjectKind, ProjectProfile, ProjectProfileKind, RunPhase,
+        RuntimeKind, RuntimeStatus,
     };
     use std::{collections::HashMap, fs};
 
@@ -1778,8 +2036,14 @@ mod tests {
 
     #[test]
     fn detects_fixed_port_from_command() {
-        assert_eq!(fixed_port_from_command("npm start -- --port 8123"), Some(8123));
-        assert_eq!(fixed_port_from_command("PORT=3000 node server.js"), Some(3000));
+        assert_eq!(
+            fixed_port_from_command("npm start -- --port 8123"),
+            Some(8123)
+        );
+        assert_eq!(
+            fixed_port_from_command("PORT=3000 node server.js"),
+            Some(3000)
+        );
         assert_eq!(fixed_port_from_command("pnpm run dev"), None);
     }
 
@@ -1800,7 +2064,10 @@ mod tests {
             last_log: None,
         };
 
-        assert_eq!(infer_run_phase(&execution, &[], false), RunPhase::WaitingForService);
+        assert_eq!(
+            infer_run_phase(&execution, &[], false),
+            RunPhase::WaitingForService
+        );
     }
 
     #[test]
@@ -1854,6 +2121,110 @@ mod tests {
         let conflicts = project_port_conflicts(&project);
         assert_eq!(conflicts.len(), 1);
         assert!(!conflicts[0].can_auto_reassign);
+    }
+
+    #[test]
+    fn detects_fixed_port_from_project_config_file() {
+        let root = std::env::temp_dir().join(format!("portpilot-config-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.yaml"), "port: 8000\n").unwrap();
+
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "SillyTavern".to_string(),
+            slug: "sillytavern".to_string(),
+            root_path: root.to_string_lossy().to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(8000),
+            resolved_port: None,
+            route_subdomain_url: "http://silly.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/silly/".to_string(),
+            has_docker_compose: false,
+            has_dockerfile: false,
+            detected_files: vec!["config.yaml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile::default(),
+            env_template: Vec::new(),
+            env_profile: EnvProfile::default(),
+            actions: vec![ProjectAction {
+                id: "run-start".to_string(),
+                label: "Start".to_string(),
+                kind: ActionKind::Run,
+                command: "npm start".to_string(),
+                workdir: root.to_string_lossy().to_string(),
+                env_profile: Some("default".to_string()),
+                port_hint: Some(8000),
+                healthcheck_url: None,
+                source: ActionSource::Inferred,
+            }],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        assert_eq!(
+            fixed_port_from_project_config(&project).as_deref(),
+            Some("config.yaml")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn treats_sillytavern_default_config_port_as_non_reassignable() {
+        let root = std::env::temp_dir().join(format!("portpilot-silly-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.yaml"), "dataRoot: ./data\nport: -1\n").unwrap();
+
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "SillyTavern".to_string(),
+            slug: "sillytavern".to_string(),
+            root_path: root.to_string_lossy().to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(8000),
+            resolved_port: None,
+            route_subdomain_url: "http://silly.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/silly/".to_string(),
+            has_docker_compose: false,
+            has_dockerfile: false,
+            detected_files: vec!["config.yaml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile::default(),
+            env_template: Vec::new(),
+            env_profile: EnvProfile::default(),
+            actions: vec![ProjectAction {
+                id: "run-start".to_string(),
+                label: "Start".to_string(),
+                kind: ActionKind::Run,
+                command: "npm start".to_string(),
+                workdir: root.to_string_lossy().to_string(),
+                env_profile: Some("default".to_string()),
+                port_hint: Some(8000),
+                healthcheck_url: None,
+                source: ActionSource::Inferred,
+            }],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        assert_eq!(
+            fixed_port_from_project_config(&project).as_deref(),
+            Some("config.yaml")
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1940,12 +2311,12 @@ services:
         };
 
         let requirements = build_compose_requirements(&project, &HashMap::new());
-        assert!(requirements.iter().any(|item| item.kind == "service" && item.name == "gateway"));
-        assert!(
-            requirements
-                .iter()
-                .any(|item| item.kind == "env" && item.name == "OPENCLAW_WORKSPACE_DIR" && !item.ready)
-        );
+        assert!(requirements
+            .iter()
+            .any(|item| item.kind == "service" && item.name == "gateway"));
+        assert!(requirements.iter().any(|item| item.kind == "env"
+            && item.name == "OPENCLAW_WORKSPACE_DIR"
+            && !item.ready));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1966,6 +2337,58 @@ services:
         assert!(known_local_service_hint("meilisearch").is_some());
         assert!(known_local_service_hint("redis").is_some());
         assert!(known_local_service_hint("unknown-service").is_none());
+    }
+
+    #[test]
+    fn returns_start_commands_for_common_local_services() {
+        assert_eq!(local_service_start_command("ollama"), Some("ollama serve"));
+        assert!(local_service_start_command("mongodb").is_some());
+        assert!(local_service_start_command("redis").is_some());
+        assert_eq!(local_service_start_command("rag_api"), None);
+    }
+
+    #[test]
+    fn classifies_known_local_dependencies_as_local_services() {
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "Open WebUI".to_string(),
+            slug: "open-webui".to_string(),
+            root_path: "/tmp/open-webui".to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Python,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(8080),
+            resolved_port: None,
+            route_subdomain_url: "http://open-webui.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/open-webui/".to_string(),
+            has_docker_compose: false,
+            has_dockerfile: false,
+            detected_files: vec!["pyproject.toml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::AiUi,
+                preferred_entrypoint: Some("run-python".to_string()),
+                required_services: vec!["ollama".to_string()],
+                required_env_groups: vec!["model-providers".to_string()],
+                known_ports: vec![8080],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: Vec::new(),
+            env_profile: EnvProfile::default(),
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let requirements = build_compose_requirements(&project, &HashMap::new());
+        assert!(requirements
+            .iter()
+            .any(|item| item.kind == "local-service" && item.name == "ollama"));
     }
 }
 
@@ -1996,13 +2419,25 @@ fn tooling_check(project: &ManagedProject) -> DoctorCheck {
             },
             Some("brew install uv || brew install python".to_string()),
         ),
-        RuntimeKind::Rust => (missing_binaries(&["cargo"]), Some("brew install rustup-init".to_string())),
-        RuntimeKind::Go => (missing_binaries(&["go"]), Some("brew install go".to_string())),
+        RuntimeKind::Rust => (
+            missing_binaries(&["cargo"]),
+            Some("brew install rustup-init".to_string()),
+        ),
+        RuntimeKind::Go => (
+            missing_binaries(&["go"]),
+            Some("brew install go".to_string()),
+        ),
         RuntimeKind::Compose => {
             let docker_ready = binary_exists("docker") || binary_exists("docker-compose");
             (
-                if docker_ready { Vec::new() } else { vec!["docker".to_string()] },
-                Some("Install Docker Desktop or Colima before running compose actions.".to_string()),
+                if docker_ready {
+                    Vec::new()
+                } else {
+                    vec!["docker".to_string()]
+                },
+                Some(
+                    "Install Docker Desktop or Colima before running compose actions.".to_string(),
+                ),
             )
         }
         RuntimeKind::Unknown => (Vec::new(), None),
@@ -2072,7 +2507,10 @@ fn env_check(project: &ManagedProject, missing_env_keys: &[String]) -> DoctorChe
             label: "Environment".to_string(),
             status: DoctorStatus::Info,
             summary: "No .env template was detected for this repository.".to_string(),
-            detail: Some("Use the raw editor if this project expects undocumented environment variables.".to_string()),
+            detail: Some(
+                "Use the raw editor if this project expects undocumented environment variables."
+                    .to_string(),
+            ),
             fix_label: None,
             fix_command: None,
         };
@@ -2146,7 +2584,9 @@ fn port_check(project: &ManagedProject, conflicts: &[DoctorPortConflict]) -> Doc
             label: "Port".to_string(),
             status: DoctorStatus::Info,
             summary: "No preferred port was inferred yet.".to_string(),
-            detail: Some("PortPilot can still learn the actual route when the app boots.".to_string()),
+            detail: Some(
+                "PortPilot can still learn the actual route when the app boots.".to_string(),
+            ),
             fix_label: None,
             fix_command: None,
         };
@@ -2162,7 +2602,11 @@ fn port_check(project: &ManagedProject, conflicts: &[DoctorPortConflict]) -> Doc
         return DoctorCheck {
             id: "port".to_string(),
             label: "Port".to_string(),
-            status: if reachable { DoctorStatus::Ok } else { DoctorStatus::Warn },
+            status: if reachable {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
             summary: if reachable {
                 format!("Route is currently reachable on port {port}.")
             } else {
@@ -2258,8 +2702,12 @@ pub fn run() {
             }
             store.normalize_stale_runtime_state()?;
             let persisted_executions = store.list_executions()?;
-            let runtime = Arc::new(RuntimeManager::new(data_dir.join("logs"), persisted_executions)?);
-            let gateway_port = tauri::async_runtime::block_on(gateway::start_gateway(Arc::clone(&store)))?;
+            let runtime = Arc::new(RuntimeManager::new(
+                data_dir.join("logs"),
+                persisted_executions,
+            )?);
+            let gateway_port =
+                tauri::async_runtime::block_on(gateway::start_gateway(Arc::clone(&store)))?;
             refresh_routes(&store, gateway_port)?;
 
             app.manage(AppState {
