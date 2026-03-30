@@ -149,6 +149,25 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
         run: npm run tauri build -- --target universal-apple-darwin
 
+      - name: Notarize and staple DMG
+        if: runner.os == 'macOS' && env.IS_BETA != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          DMG_PATH=$(find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -type f | head -1)
+          if [ -z "$DMG_PATH" ]; then
+            echo "No DMG found to notarize" >&2
+            exit 1
+          fi
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
       - name: Build Tauri app (Windows)
         if: runner.os == 'Windows'
         run: npm run tauri build
@@ -175,6 +194,14 @@ jobs:
           fi
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/PortPilot-${VERSION}-macOS.zip"
           cp "$DMG_PATH" "release-assets/PortPilot-${VERSION}-macOS.dmg"
+
+      - name: Verify macOS release bundle
+        if: runner.os == 'macOS' && env.IS_BETA != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/verify-macos-release.sh
+          scripts/verify-macos-release.sh "release-assets/PortPilot-${GITHUB_REF_NAME}-macOS.dmg" --skip-launch
 
       - name: Prepare Windows release assets
         if: runner.os == 'Windows'

@@ -10,6 +10,7 @@ use std::thread;
 use chrono::Utc;
 use parking_lot::Mutex;
 use portpicker::pick_unused_port;
+use regex::Regex;
 use tauri::{AppHandle, Emitter};
 
 use crate::core::models::{
@@ -78,7 +79,7 @@ impl RuntimeManager {
     ) -> Result<ActionExecution, String> {
         let execution_id = format!("{}-{}", project.id, action.id);
         let assigned_port = if matches!(action.kind, ActionKind::Run) {
-            action.port_hint.map(select_port)
+            fixed_port_from_command(&action.command).or_else(|| action.port_hint.map(select_port))
         } else {
             None
         };
@@ -147,6 +148,27 @@ impl RuntimeManager {
         app.emit("action-started", &execution)
             .map_err(|error| error.to_string())?;
 
+        if matches!(action.kind, ActionKind::Run) {
+            let route_message = if let Some(port) = assigned_port {
+                format!(
+                    "Monitoring {} on port {} via {}.",
+                    project.name, port, project.route_path_url
+                )
+            } else {
+                format!("Started {} without a resolved port hint yet.", project.name)
+            };
+            self.emit_system_log(app.clone(), &execution_id, route_message);
+            if let Some(fixed_port) = fixed_port_from_command(&action.command) {
+                self.emit_system_log(
+                    app.clone(),
+                    &execution_id,
+                    format!(
+                        "Detected a fixed port ({fixed_port}) in the command. Port reassignment is disabled for this action."
+                    ),
+                );
+            }
+        }
+
         if let Some(stdout) = stdout {
             self.spawn_stream_reader(
                 app.clone(),
@@ -211,6 +233,11 @@ impl RuntimeManager {
                 .lock()
                 .insert(execution.id.clone(), execution.clone());
             store.upsert_execution(execution)?;
+            self.emit_system_log(
+                app.clone(),
+                execution_id,
+                format!("Stopped {}.", execution.label),
+            );
             app.emit("action-finished", execution)
                 .map_err(|error| error.to_string())?;
         }
@@ -229,29 +256,22 @@ impl RuntimeManager {
     {
         let stream_name = stream_name.to_string();
         let logs = self.logs.clone();
-        let log_file = self.log_dir.join(format!("{execution_id}.log"));
+        let executions = self.executions.clone();
+        let log_dir = self.log_dir.clone();
         thread::spawn(move || {
-            let mut writer = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_file)
-                .ok();
-
             for line in BufReader::new(reader).lines().map_while(Result::ok) {
-                let entry = LogEntry {
-                    execution_id: execution_id.clone(),
-                    stream: stream_name.clone(),
-                    message: line.clone(),
-                    timestamp: now_iso(),
-                };
-                logs.lock()
-                    .entry(execution_id.clone())
-                    .or_default()
-                    .push(entry.clone());
-                if let Some(file) = writer.as_mut() {
-                    let _ = writeln!(file, "[{}] [{}] {}", entry.timestamp, entry.stream, entry.message);
-                }
-                let _ = app.emit("action-log", &entry);
+                Self::push_log_entry(
+                    &app,
+                    &executions,
+                    &logs,
+                    &log_dir,
+                    LogEntry {
+                        execution_id: execution_id.clone(),
+                        stream: stream_name.clone(),
+                        message: line,
+                        timestamp: now_iso(),
+                    },
+                );
             }
         });
     }
@@ -268,6 +288,8 @@ impl RuntimeManager {
         let executions = self.executions.clone();
         let children = self.children.clone();
         let stopped_ids = self.stopped_ids.clone();
+        let logs = self.logs.clone();
+        let log_dir = self.log_dir.clone();
 
         thread::spawn(move || {
             let exit_status = child.lock().wait();
@@ -289,6 +311,24 @@ impl RuntimeManager {
                 current.clone()
             };
             let _ = store.upsert_execution(&updated);
+            let result_message = match status {
+                ExecutionStatus::Success => format!("{} finished successfully.", updated.label),
+                ExecutionStatus::Stopped => format!("{} was stopped.", updated.label),
+                ExecutionStatus::Failed => format!("{} exited unexpectedly.", updated.label),
+                ExecutionStatus::Running => return,
+            };
+            Self::push_log_entry(
+                &app,
+                &executions,
+                &logs,
+                &log_dir,
+                LogEntry {
+                    execution_id: execution_id.clone(),
+                    stream: "system".to_string(),
+                    message: result_message,
+                    timestamp: now_iso(),
+                },
+            );
 
             if matches!(action_kind, ActionKind::Run) {
                 let _ = store.update(&project_id, |item| {
@@ -306,6 +346,44 @@ impl RuntimeManager {
 
             let _ = app.emit("action-finished", &updated);
         });
+    }
+
+    fn emit_system_log(&self, app: AppHandle, execution_id: &str, message: String) {
+        Self::push_log_entry(
+            &app,
+            &self.executions,
+            &self.logs,
+            &self.log_dir,
+            LogEntry {
+                execution_id: execution_id.to_string(),
+                stream: "system".to_string(),
+                message,
+                timestamp: now_iso(),
+            },
+        );
+    }
+
+    fn push_log_entry(
+        app: &AppHandle,
+        executions: &Arc<Mutex<HashMap<String, ActionExecution>>>,
+        logs: &Arc<Mutex<HashMap<String, Vec<LogEntry>>>>,
+        log_dir: &PathBuf,
+        entry: LogEntry,
+    ) {
+        if let Some(execution) = executions.lock().get_mut(&entry.execution_id) {
+            execution.last_log = Some(entry.message.clone());
+        }
+        logs.lock()
+            .entry(entry.execution_id.clone())
+            .or_default()
+            .push(entry.clone());
+
+        let log_file = log_dir.join(format!("{}.log", entry.execution_id));
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file) {
+            let _ = writeln!(file, "[{}] [{}] {}", entry.timestamp, entry.stream, entry.message);
+        }
+
+        let _ = app.emit("action-log", &entry);
     }
 }
 
@@ -325,6 +403,10 @@ fn shell_command(command: &str) -> Command {
 }
 
 fn prepare_command(project: &ManagedProject, action: &ProjectAction, assigned_port: Option<u16>) -> String {
+    if fixed_port_from_command(&action.command).is_some() {
+        return action.command.clone();
+    }
+
     let mut command = action.command.clone();
     if let Some(port) = assigned_port {
         if matches!(project.runtime_kind, crate::core::models::RuntimeKind::Node)
@@ -351,4 +433,25 @@ fn port_is_free(port: u16) -> bool {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn fixed_port_from_command(command: &str) -> Option<u16> {
+    let patterns = [
+        Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
+        Regex::new(r"-p\s+(\d{2,5})").expect("regex"),
+        Regex::new(r"PORT=(\d{2,5})").expect("regex"),
+    ];
+
+    for pattern in patterns {
+        if let Some(capture) = pattern.captures(command) {
+            if let Some(port) = capture
+                .get(1)
+                .and_then(|value| value.as_str().parse::<u16>().ok())
+            {
+                return Some(port);
+            }
+        }
+    }
+
+    None
 }

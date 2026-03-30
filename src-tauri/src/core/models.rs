@@ -77,6 +77,17 @@ pub enum BatchItemStatus {
     Skipped,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunPhase {
+    Installing,
+    Starting,
+    WaitingForPort,
+    Healthy,
+    Failed,
+    Stopped,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedRepo {
     pub name: String,
@@ -142,6 +153,8 @@ pub struct ManagedProject {
     pub has_dockerfile: bool,
     pub detected_files: Vec<String>,
     #[serde(default)]
+    pub primary_target_id: Option<String>,
+    #[serde(default)]
     pub workspace_targets: Vec<DetectedAppTarget>,
     #[serde(default)]
     pub readme_hints: Vec<String>,
@@ -160,6 +173,8 @@ pub struct DetectedAppTarget {
     pub root_path: String,
     pub runtime_kind: RuntimeKind,
     pub suggested_port: Option<u16>,
+    #[serde(default)]
+    pub priority: i32,
     #[serde(default)]
     pub available_actions: Vec<String>,
 }
@@ -193,6 +208,8 @@ pub struct DoctorReport {
     pub install_action_id: Option<String>,
     pub run_action_id: Option<String>,
     pub open_action_id: Option<String>,
+    #[serde(default)]
+    pub recommended_next_step: Option<String>,
     pub checks: Vec<DoctorCheck>,
 }
 
@@ -247,6 +264,32 @@ pub struct ActionExecution {
     pub started_at: String,
     pub finished_at: Option<String>,
     pub last_log: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealthProbeResult {
+    pub url: Option<String>,
+    pub ready: bool,
+    pub last_checked_at: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeNode {
+    pub project_id: String,
+    pub project_name: String,
+    pub runtime_kind: RuntimeKind,
+    pub status: RuntimeStatus,
+    pub execution_id: Option<String>,
+    pub execution_label: Option<String>,
+    pub execution_status: Option<ExecutionStatus>,
+    pub run_phase: Option<RunPhase>,
+    pub route_url: String,
+    pub port: Option<u16>,
+    pub last_log: Option<String>,
+    pub health: Option<HealthProbeResult>,
+    #[serde(default)]
+    pub compose_services: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

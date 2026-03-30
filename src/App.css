@@ -216,7 +216,9 @@ button {
 .candidate-list,
 .runtime-list,
 .action-stack,
-.session-list {
+.session-list,
+.runtime-node-grid,
+.log-group {
   display: grid;
   gap: 0.9rem;
 }
@@ -561,6 +563,59 @@ textarea {
   font-size: 0.82rem;
 }
 
+.target-card__header,
+.runtime-summary__row,
+.log-group__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.info-banner,
+.runtime-summary,
+.runtime-node-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(118, 149, 196, 0.14);
+}
+
+.runtime-summary__meta,
+.runtime-node-grid,
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.runtime-summary__meta span,
+.log-group__header span {
+  color: #8ea4c1;
+  font-size: 0.82rem;
+}
+
+.runtime-summary__copy {
+  margin: 0;
+  color: #a8bbd5;
+}
+
+.runtime-node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.runtime-node-card__log {
+  display: block;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #d8e7ff;
+  word-break: break-word;
+}
+
 .session-card p {
   margin: 0;
 }
@@ -597,6 +652,25 @@ th {
     "SF Mono",
     "JetBrains Mono",
     monospace;
+}
+
+.log-toolbar {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.log-toolbar select,
+.log-toolbar input {
+  width: auto;
+  min-width: 160px;
+}
+
+.log-group {
+  gap: 0.4rem;
+}
+
+.log-group__header {
+  padding: 0.45rem 0.2rem;
 }
 
 .log-line {

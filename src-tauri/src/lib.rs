@@ -12,6 +12,7 @@ mod storage {
 
 use std::collections::HashMap;
 use std::fs;
+use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -28,8 +29,9 @@ use crate::core::inference::{
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
     DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, ImportedRepo,
-    LogEntry, ManagedProject, PortLease, ProjectAction, RouteBinding, RuntimeKind,
-    RuntimeStatus, WorkspaceSession, WorkspaceSessionProject,
+    HealthProbeResult, LogEntry, ManagedProject, PortLease, ProjectAction, RouteBinding,
+    RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
+    WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
 use crate::storage::store::ProjectStore;
@@ -218,6 +220,18 @@ fn delete_workspace_session(
 #[tauri::command]
 fn list_action_executions(state: State<'_, AppState>) -> Result<Vec<ActionExecution>, String> {
     Ok(state.runtime.list_executions())
+}
+
+#[tauri::command]
+fn list_runtime_nodes(state: State<'_, AppState>) -> Result<Vec<RuntimeNode>, String> {
+    let projects = state.store.list()?;
+    let executions = state.runtime.list_executions();
+    let logs = state.runtime.list_logs(None);
+
+    Ok(projects
+        .into_iter()
+        .map(|project| build_runtime_node(&project, &executions, &logs))
+        .collect())
 }
 
 #[tauri::command]
@@ -813,6 +827,10 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
         .iter()
         .find(|action| matches!(action.kind, ActionKind::Open))
         .map(|action| action.id.clone());
+    let primary_target = project
+        .primary_target_id
+        .as_ref()
+        .and_then(|target_id| project.workspace_targets.iter().find(|target| &target.id == target_id));
 
     let env_values = merged_env_values(project);
     let missing_env_keys = project
@@ -837,19 +855,38 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
         checks.push(DoctorCheck {
             id: "workspace-targets".to_string(),
             label: "Monorepo Targets".to_string(),
-            status: DoctorStatus::Info,
+            status: if primary_target.is_some() {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Info
+            },
             summary: format!(
                 "Detected {} runnable app target{} inside this repo.",
                 project.workspace_targets.len(),
                 if project.workspace_targets.len() == 1 { "" } else { "s" }
             ),
             detail: Some(
-                project
-                    .workspace_targets
-                    .iter()
-                    .map(|target| format!("{} ({})", target.name, target.relative_path))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                if let Some(target) = primary_target {
+                    format!(
+                        "Recommended target: {} ({}) | Other targets: {}",
+                        target.name,
+                        target.relative_path,
+                        project
+                            .workspace_targets
+                            .iter()
+                            .filter(|item| item.id != target.id)
+                            .map(|item| format!("{} ({})", item.name, item.relative_path))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    project
+                        .workspace_targets
+                        .iter()
+                        .map(|target| format!("{} ({})", target.name, target.relative_path))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
             ),
             fix_label: None,
             fix_command: None,
@@ -870,12 +907,168 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
     DoctorReport {
         project_id: project.id.clone(),
         generated_at: now_iso(),
-        missing_env_keys,
+        missing_env_keys: missing_env_keys.clone(),
         install_action_id,
         run_action_id,
         open_action_id,
+        recommended_next_step: recommend_next_step(project, &missing_env_keys),
         checks,
     }
+}
+
+fn recommend_next_step(project: &ManagedProject, missing_env_keys: &[String]) -> Option<String> {
+    if tooling_check(project).status == DoctorStatus::Error {
+        return Some("Install the required local tooling first.".to_string());
+    }
+
+    if !missing_env_keys.is_empty() {
+        return Some(format!(
+            "Fill in {} missing environment value{} before running.",
+            missing_env_keys.len(),
+            if missing_env_keys.len() == 1 { "" } else { "s" }
+        ));
+    }
+
+    if matches!(project.status, RuntimeStatus::Running) {
+        return Some("Open the live route or inspect the runtime panel.".to_string());
+    }
+
+    if let Some(target) = project
+        .primary_target_id
+        .as_ref()
+        .and_then(|target_id| project.workspace_targets.iter().find(|item| &item.id == target_id))
+    {
+        return Some(format!(
+            "Start the recommended target {} in {}.",
+            target.name, target.relative_path
+        ));
+    }
+
+    if project.actions.iter().any(|action| matches!(action.kind, ActionKind::Install)) {
+        return Some("Run install first, then start the primary action.".to_string());
+    }
+
+    if project.actions.iter().any(|action| matches!(action.kind, ActionKind::Run)) {
+        return Some("Start the primary run action to bring this repo online.".to_string());
+    }
+
+    None
+}
+
+fn build_runtime_node(
+    project: &ManagedProject,
+    executions: &[ActionExecution],
+    logs: &[LogEntry],
+) -> RuntimeNode {
+    let current_execution = executions
+        .iter()
+        .filter(|execution| execution.project_id == project.id)
+        .max_by(|left, right| left.started_at.cmp(&right.started_at));
+
+    let execution_logs = current_execution
+        .map(|execution| {
+            logs.iter()
+                .filter(|entry| entry.execution_id == execution.id)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let run_phase = current_execution.map(|execution| infer_run_phase(execution, &execution_logs));
+    let health = current_execution.and_then(|execution| {
+        let port = execution.resolved_port.or(project.resolved_port).or(project.preferred_port);
+        let url = port.map(|value| format!("http://127.0.0.1:{value}/"));
+        let ready_from_logs = execution_logs.iter().rev().any(|entry| is_ready_signal(&entry.message));
+        let ready = port.map(port_is_open).unwrap_or(false) || ready_from_logs;
+        let summary = if ready {
+            Some("Route is reachable and the process looks ready.".to_string())
+        } else if execution.status == crate::core::models::ExecutionStatus::Running {
+            Some("Waiting for the project to bind a port or emit a ready signal.".to_string())
+        } else {
+            None
+        };
+        Some(HealthProbeResult {
+            url,
+            ready,
+            last_checked_at: Some(now_iso()),
+            summary,
+        })
+    });
+
+    RuntimeNode {
+        project_id: project.id.clone(),
+        project_name: project.name.clone(),
+        runtime_kind: project.runtime_kind.clone(),
+        status: project.status.clone(),
+        execution_id: current_execution.map(|execution| execution.id.clone()),
+        execution_label: current_execution.map(|execution| execution.label.clone()),
+        execution_status: current_execution.map(|execution| execution.status.clone()),
+        run_phase,
+        route_url: project.route_path_url.clone(),
+        port: project.resolved_port.or(project.preferred_port),
+        last_log: execution_logs.last().map(|entry| entry.message.clone()),
+        health,
+        compose_services: if project.has_docker_compose {
+            vec!["compose".to_string()]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+fn infer_run_phase(execution: &ActionExecution, logs: &[LogEntry]) -> RunPhase {
+    use crate::core::models::ExecutionStatus;
+
+    match execution.status {
+        ExecutionStatus::Failed => return RunPhase::Failed,
+        ExecutionStatus::Stopped | ExecutionStatus::Success => return RunPhase::Stopped,
+        ExecutionStatus::Running => {}
+    }
+
+    if execution.command.contains(" install") || execution.command.starts_with("uv sync") {
+        return RunPhase::Installing;
+    }
+
+    if logs.iter().rev().any(|entry| is_ready_signal(&entry.message)) {
+        return RunPhase::Healthy;
+    }
+
+    if execution.resolved_port.is_some() {
+        if execution.resolved_port.map(port_is_open).unwrap_or(false) {
+            return RunPhase::Healthy;
+        }
+        return RunPhase::WaitingForPort;
+    }
+
+    if logs.iter().rev().any(|entry| is_failure_signal(&entry.message)) {
+        return RunPhase::Failed;
+    }
+
+    RunPhase::Starting
+}
+
+fn is_ready_signal(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("ready in")
+        || normalized.contains("server ready")
+        || normalized.contains("listening on")
+        || normalized.contains("listening at")
+        || normalized.contains("started on")
+        || normalized.contains("healthcheck passed")
+        || normalized.contains("local:")
+}
+
+fn is_failure_signal(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("error")
+        || normalized.contains("failed")
+        || normalized.contains("exception")
+        || normalized.contains("panic")
+}
+
+fn port_is_open(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
 }
 
 fn merged_env_values(project: &ManagedProject) -> HashMap<String, String> {
@@ -1190,6 +1383,7 @@ pub fn run() {
             save_workspace_session,
             delete_workspace_session,
             list_action_executions,
+            list_runtime_nodes,
             get_project_logs,
             list_ports,
             list_routes,

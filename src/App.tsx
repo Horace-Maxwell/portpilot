@@ -16,6 +16,7 @@ import type {
   PortLease,
   ProjectAction,
   RouteBinding,
+  RuntimeNode,
   WorkspaceSession,
 } from "./shared/types";
 
@@ -23,6 +24,7 @@ type NavKey =
   | "dashboard"
   | "import"
   | "projects"
+  | "runtime"
   | "routes"
   | "ports"
   | "logs"
@@ -32,6 +34,7 @@ const NAV_ITEMS: Array<{ key: NavKey; label: string }> = [
   { key: "dashboard", label: "Dashboard" },
   { key: "import", label: "Import" },
   { key: "projects", label: "Projects" },
+  { key: "runtime", label: "Runtime" },
   { key: "routes", label: "Routes" },
   { key: "ports", label: "Ports" },
   { key: "logs", label: "Logs" },
@@ -45,6 +48,7 @@ export default function App() {
   const [candidates, setCandidates] = useState<ImportedRepo[]>([]);
   const [executions, setExecutions] = useState<ActionExecution[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [runtimeNodes, setRuntimeNodes] = useState<RuntimeNode[]>([]);
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
   const [doctorReports, setDoctorReports] = useState<Record<string, DoctorReport>>({});
@@ -59,6 +63,8 @@ export default function App() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [envRawText, setEnvRawText] = useState("");
+  const [logQuery, setLogQuery] = useState("");
+  const [logStreamFilter, setLogStreamFilter] = useState<"all" | "stdout" | "stderr" | "system">("all");
   const [currentVersion, setCurrentVersion] = useState("0.1.0");
   const update = useUpdate();
 
@@ -85,6 +91,23 @@ export default function App() {
         ? executions.filter((execution) => execution.project_id === selectedProject.id)
         : executions,
     [executions, selectedProject],
+  );
+  const selectedRuntimeNodes = useMemo(
+    () =>
+      selectedProject
+        ? runtimeNodes.filter((node) => node.project_id === selectedProject.id)
+        : runtimeNodes,
+    [runtimeNodes, selectedProject],
+  );
+  const filteredLogs = useMemo(
+    () =>
+      selectedLogs.filter((entry) => {
+        const streamMatches = logStreamFilter === "all" || entry.stream === logStreamFilter;
+        const query = logQuery.trim().toLowerCase();
+        const queryMatches = !query || entry.message.toLowerCase().includes(query);
+        return streamMatches && queryMatches;
+      }),
+    [logQuery, logStreamFilter, selectedLogs],
   );
 
   useEffect(() => {
@@ -189,16 +212,33 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      void refreshRuntimeOnly();
+    }, 2000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+
   const runningProjects = projects.filter((project) => project.status === "running").length;
   const selectedDoctorReport = selectedProject ? doctorReports[selectedProject.id] ?? null : null;
 
   async function refreshAll() {
-    const [roots, nextProjects, nextExecutions, nextLogs, nextPorts, nextRoutes, nextSessions] =
+    const [
+      roots,
+      nextProjects,
+      nextExecutions,
+      nextLogs,
+      nextRuntimeNodes,
+      nextPorts,
+      nextRoutes,
+      nextSessions,
+    ] =
       await Promise.all([
         api.listWorkspaceRoots(),
         api.listProjects(),
         api.listActionExecutions(),
         api.getProjectLogs(),
+        api.listRuntimeNodes(),
         api.listPorts(),
         api.listRoutes(),
         api.listWorkspaceSessions(),
@@ -209,6 +249,7 @@ export default function App() {
     setProjects(nextProjects);
     setExecutions(nextExecutions);
     setLogs(nextLogs);
+    setRuntimeNodes(nextRuntimeNodes);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
     setSessions(nextSessions);
@@ -216,14 +257,29 @@ export default function App() {
   }
 
   async function refreshProjectsOnly() {
-    const [nextProjects, nextExecutions, nextPorts, nextRoutes] = await Promise.all([
+    const [nextProjects, nextExecutions, nextRuntimeNodes, nextPorts, nextRoutes] = await Promise.all([
       api.listProjects(),
       api.listActionExecutions(),
+      api.listRuntimeNodes(),
       api.listPorts(),
       api.listRoutes(),
     ]);
     setProjects(nextProjects);
     setExecutions(nextExecutions);
+    setRuntimeNodes(nextRuntimeNodes);
+    setPorts(nextPorts);
+    setRoutes(nextRoutes);
+  }
+
+  async function refreshRuntimeOnly() {
+    const [nextExecutions, nextRuntimeNodes, nextPorts, nextRoutes] = await Promise.all([
+      api.listActionExecutions(),
+      api.listRuntimeNodes(),
+      api.listPorts(),
+      api.listRoutes(),
+    ]);
+    setExecutions(nextExecutions);
+    setRuntimeNodes(nextRuntimeNodes);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
   }
@@ -510,6 +566,7 @@ export default function App() {
                   const runAction = firstAction(project, "run");
                   const buildAction = firstAction(project, "build");
                   const deployAction = firstAction(project, "deploy");
+                  const primaryTarget = projectPrimaryTarget(project);
                   return (
                     <article key={project.id} className="project-card">
                       <div className="project-card__top">
@@ -542,6 +599,7 @@ export default function App() {
                       <div className="project-card__meta">
                         <span>{project.route_path_url}</span>
                         <span>{project.resolved_port ?? project.preferred_port ?? "No port hint"}</span>
+                        {primaryTarget && <span>Target: {primaryTarget.name}</span>}
                       </div>
                       <div className="action-row">
                         {runAction && (
@@ -794,6 +852,14 @@ export default function App() {
                     <section className="subpanel">
                       <h4>Overview</h4>
                       <Definition label="Status" value={selectedProject.status} />
+                      <Definition
+                        label="Recommended Target"
+                        value={
+                          projectPrimaryTarget(selectedProject)
+                            ? `${projectPrimaryTarget(selectedProject)?.name} (${projectPrimaryTarget(selectedProject)?.relative_path})`
+                            : "Root project"
+                        }
+                      />
                       <Definition label="Port" value={String(selectedProject.resolved_port ?? selectedProject.preferred_port ?? "Unknown")} />
                       <Definition label="Subdomain" value={selectedProject.route_subdomain_url} />
                       <Definition label="Path Route" value={selectedProject.route_path_url} />
@@ -818,6 +884,12 @@ export default function App() {
                       <h4>Setup / Doctor</h4>
                       {selectedDoctorReport ? (
                         <>
+                          {selectedDoctorReport.recommended_next_step && (
+                            <div className="info-banner">
+                              <strong>Recommended next step</strong>
+                              <p>{selectedDoctorReport.recommended_next_step}</p>
+                            </div>
+                          )}
                           <SetupWizard
                             project={selectedProject}
                             report={selectedDoctorReport}
@@ -937,6 +1009,24 @@ export default function App() {
 
                     <section className="subpanel">
                       <h4>Runtime</h4>
+                      {selectedRuntimeNodes[0] && (
+                        <article className="runtime-summary">
+                          <div className="runtime-summary__row">
+                            <strong>{selectedRuntimeNodes[0].execution_label ?? "No active execution"}</strong>
+                            <span className={`status-pill status-pill--${selectedRuntimeNodes[0].status}`}>
+                              {selectedRuntimeNodes[0].status.replace("_", " ")}
+                            </span>
+                          </div>
+                          <div className="runtime-summary__meta">
+                            <span>Phase: {selectedRuntimeNodes[0].run_phase ?? "unknown"}</span>
+                            <span>Port: {selectedRuntimeNodes[0].port ?? "n/a"}</span>
+                            <span>Route: {selectedRuntimeNodes[0].route_url}</span>
+                          </div>
+                          {selectedRuntimeNodes[0].health?.summary && (
+                            <p className="runtime-summary__copy">{selectedRuntimeNodes[0].health?.summary}</p>
+                          )}
+                        </article>
+                      )}
                       <div className="runtime-list">
                         {selectedExecutions.length > 0 ? (
                           selectedExecutions.map((execution) => (
@@ -965,7 +1055,12 @@ export default function App() {
                         <div className="target-grid">
                           {selectedProject.workspace_targets.map((target) => (
                             <article key={target.id} className="target-card">
-                              <strong>{target.name}</strong>
+                              <div className="target-card__header">
+                                <strong>{target.name}</strong>
+                                <span className={`status-pill ${selectedProject.primary_target_id === target.id ? "status-pill--doctor-ok" : "status-pill--doctor-info"}`}>
+                                  {selectedProject.primary_target_id === target.id ? "Recommended" : `Priority ${target.priority}`}
+                                </span>
+                              </div>
                               <p>{target.relative_path}</p>
                               <div className="target-card__meta">
                                 <span>{target.runtime_kind}</span>
@@ -990,6 +1085,64 @@ export default function App() {
                 />
               )}
             </section>
+          </section>
+        )}
+
+        {view === "runtime" && (
+          <section className="panel panel--wide">
+            <div className="panel__header">
+              <div>
+                <h3>Unified Runtime</h3>
+                <p>See local processes, compose-backed apps, health signals, and routes in one place.</p>
+              </div>
+            </div>
+            <div className="runtime-node-grid">
+              {runtimeNodes.map((node) => (
+                <article key={node.project_id} className="runtime-node-card">
+                  <div className="runtime-summary__row">
+                    <div>
+                      <strong>{node.project_name}</strong>
+                      <p>{node.execution_label ?? "No active execution"}</p>
+                    </div>
+                    <span className={`status-pill status-pill--${node.status}`}>
+                      {node.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="runtime-summary__meta">
+                    <span>Phase: {node.run_phase ?? "idle"}</span>
+                    <span>Port: {node.port ?? "n/a"}</span>
+                    <span>{node.runtime_kind}</span>
+                  </div>
+                  {node.health?.summary && <p className="runtime-summary__copy">{node.health.summary}</p>}
+                  {node.last_log && <code className="runtime-node-card__log">{node.last_log}</code>}
+                  <div className="action-row">
+                    <button
+                      className="secondary-button"
+                      onClick={() => void openUrl(node.route_url)}
+                      type="button"
+                    >
+                      Open Route
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() => {
+                        setSelectedProjectId(node.project_id);
+                        setView("projects");
+                      }}
+                      type="button"
+                    >
+                      Inspect Project
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {runtimeNodes.length === 0 && (
+                <EmptyState
+                  title="No runtime nodes yet"
+                  description="Import a repo and start a run action to populate the runtime surface."
+                />
+              )}
+            </div>
           </section>
         )}
 
@@ -1034,18 +1187,41 @@ export default function App() {
         {view === "logs" && (
           <section className="panel panel--wide">
             <div className="panel__header">
-              <h3>Live Logs</h3>
-              <p>Stream action output from installs, runs, builds, deploys, and compose flows.</p>
+              <div>
+                <h3>Live Logs</h3>
+                <p>Stream action output from installs, runs, builds, deploys, and compose flows.</p>
+              </div>
+              <div className="log-toolbar">
+                <select value={logStreamFilter} onChange={(event) => setLogStreamFilter(event.currentTarget.value as "all" | "stdout" | "stderr" | "system")}>
+                  <option value="all">All streams</option>
+                  <option value="stdout">stdout</option>
+                  <option value="stderr">stderr</option>
+                  <option value="system">system</option>
+                </select>
+                <input
+                  placeholder="Search logs"
+                  value={logQuery}
+                  onInput={(event) => setLogQuery(event.currentTarget.value)}
+                />
+              </div>
             </div>
             <div className="log-console">
-              {selectedLogs.map((entry) => (
-                <div key={`${entry.execution_id}-${entry.timestamp}-${entry.message}`} className={`log-line log-line--${entry.stream}`}>
-                  <span>{entry.timestamp}</span>
-                  <strong>{entry.stream}</strong>
-                  <p>{entry.message}</p>
+              {groupLogsByExecution(filteredLogs, executions).map((group) => (
+                <div key={group.executionId} className="log-group">
+                  <div className="log-group__header">
+                    <strong>{group.label}</strong>
+                    <span>{group.entries.length} lines</span>
+                  </div>
+                  {group.entries.map((entry) => (
+                    <div key={`${entry.execution_id}-${entry.timestamp}-${entry.message}`} className={`log-line log-line--${entry.stream}`}>
+                      <span>{entry.timestamp}</span>
+                      <strong>{entry.stream}</strong>
+                      <p>{entry.message}</p>
+                    </div>
+                  ))}
                 </div>
               ))}
-              {selectedLogs.length === 0 && (
+              {filteredLogs.length === 0 && (
                 <EmptyState title="No logs yet" description="Run an action and PortPilot will begin streaming output." />
               )}
             </div>
@@ -1153,6 +1329,40 @@ export default function App() {
 
 function firstAction(project: ManagedProject, kind: ActionKind): ProjectAction | null {
   return project.actions.find((action) => action.kind === kind) ?? null;
+}
+
+function projectPrimaryTarget(project: ManagedProject) {
+  return (
+    project.workspace_targets.find((target) => target.id === project.primary_target_id) ??
+    project.workspace_targets[0] ??
+    null
+  );
+}
+
+function groupLogsByExecution(logs: LogEntry[], executions: ActionExecution[]) {
+  const labelById = new Map(
+    executions.map((execution) => [execution.id, `${execution.label} · ${execution.command}`]),
+  );
+  const groups = new Map<string, { executionId: string; label: string; entries: LogEntry[] }>();
+
+  for (const entry of logs) {
+    const existing = groups.get(entry.execution_id);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    groups.set(entry.execution_id, {
+      executionId: entry.execution_id,
+      label: labelById.get(entry.execution_id) ?? entry.execution_id,
+      entries: [entry],
+    });
+  }
+
+  return Array.from(groups.values()).sort((left, right) => {
+    const leftTime = left.entries[left.entries.length - 1]?.timestamp ?? "";
+    const rightTime = right.entries[right.entries.length - 1]?.timestamp ?? "";
+    return rightTime.localeCompare(leftTime);
+  });
 }
 
 function upsertById<T extends { id: string }>(items: T[], next: T): T[] {

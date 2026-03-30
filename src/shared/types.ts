@@ -21,6 +21,13 @@ export type EnvFieldType = "text" | "secret" | "boolean" | "multiline";
 export type ExecutionStatus = "running" | "success" | "failed" | "stopped";
 export type DoctorStatus = "ok" | "warn" | "error" | "info";
 export type BatchItemStatus = "success" | "failed" | "skipped";
+export type RunPhase =
+  | "installing"
+  | "starting"
+  | "waiting_for_port"
+  | "healthy"
+  | "failed"
+  | "stopped";
 
 export interface ImportedRepo {
   name: string;
@@ -79,6 +86,7 @@ export interface ManagedProject {
   has_docker_compose: boolean;
   has_dockerfile: boolean;
   detected_files: string[];
+  primary_target_id: string | null;
   workspace_targets: DetectedAppTarget[];
   readme_hints: string[];
   env_template: EnvTemplateField[];
@@ -95,6 +103,7 @@ export interface DetectedAppTarget {
   root_path: string;
   runtime_kind: RuntimeKind;
   suggested_port: number | null;
+  priority: number;
   available_actions: string[];
 }
 
@@ -115,6 +124,7 @@ export interface DoctorReport {
   install_action_id: string | null;
   run_action_id: string | null;
   open_action_id: string | null;
+  recommended_next_step: string | null;
   checks: DoctorCheck[];
 }
 
@@ -164,6 +174,29 @@ export interface ActionExecution {
   started_at: string;
   finished_at: string | null;
   last_log: string | null;
+}
+
+export interface HealthProbeResult {
+  url: string | null;
+  ready: boolean;
+  last_checked_at: string | null;
+  summary: string | null;
+}
+
+export interface RuntimeNode {
+  project_id: string;
+  project_name: string;
+  runtime_kind: RuntimeKind;
+  status: RuntimeStatus;
+  execution_id: string | null;
+  execution_label: string | null;
+  execution_status: ExecutionStatus | null;
+  run_phase: RunPhase | null;
+  route_url: string;
+  port: number | null;
+  last_log: string | null;
+  health: HealthProbeResult | null;
+  compose_services: string[];
 }
 
 export interface LogEntry {

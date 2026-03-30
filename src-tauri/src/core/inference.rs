@@ -290,6 +290,7 @@ pub fn infer_project_from_path(
     let preferred_port = infer_port_hint(root, compose_file.as_deref());
     let env_template = parse_env_template(root);
     let workspace_targets = detect_workspace_targets(root);
+    let primary_target_id = workspace_targets.first().map(|target| target.id.clone());
     let readme_hints = infer_readme_hints(root);
     let route_subdomain_url = format!("http://{}.localhost:{}", slug, gateway_port);
     let route_path_url = format!("http://gateway.localhost:{}/p/{}/", gateway_port, slug);
@@ -321,6 +322,7 @@ pub fn infer_project_from_path(
         has_docker_compose: compose_file.is_some(),
         has_dockerfile: dockerfile.exists(),
         detected_files,
+        primary_target_id,
         workspace_targets,
         readme_hints,
         env_template,
@@ -516,7 +518,16 @@ fn detect_workspace_targets(root: &Path) -> Vec<DetectedAppTarget> {
         }
     }
 
-    output.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    for target in &mut output {
+        target.priority = score_target(root, target);
+    }
+
+    output.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
     output
 }
 
@@ -549,15 +560,13 @@ fn infer_readme_hints(root: &Path) -> Vec<String> {
                 continue;
             };
             if seen.insert(command.clone()) {
-                hints.push(command);
-            }
-            if hints.len() == 4 {
-                return hints;
+                hints.push((score_readme_hint(&command, &contents), command));
             }
         }
     }
 
-    hints
+    hints.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    hints.into_iter().map(|(_, command)| command).take(4).collect()
 }
 
 fn action(
@@ -846,8 +855,74 @@ fn build_detected_target(root: &Path, target_path: &Path) -> Option<DetectedAppT
         root_path: target_path.to_string_lossy().to_string(),
         runtime_kind,
         suggested_port: infer_port_hint(target_path, first_existing(target_path, &["docker-compose.yml", "docker-compose.yaml", "compose.yaml"]).as_deref()),
+        priority: 0,
         available_actions,
     })
+}
+
+fn score_readme_hint(command: &str, readme_contents: &str) -> i32 {
+    let mut score = 0;
+    let command_lower = command.to_ascii_lowercase();
+    if command_lower.contains(" install") || command_lower.ends_with(" install") {
+        score += 1;
+    }
+    if command_lower.contains(" dev") || command_lower.contains(" run dev") {
+        score += 6;
+    }
+    if command_lower.contains(" start") {
+        score += 5;
+    }
+    if command_lower.contains("preview") {
+        score += 3;
+    }
+    if command_lower.contains("docker compose up") {
+        score += 4;
+    }
+    if readme_contents.to_ascii_lowercase().contains("quick start") {
+        score += 1;
+    }
+    score
+}
+
+fn score_target(root: &Path, target: &DetectedAppTarget) -> i32 {
+    let mut score = 0;
+    let relative = target.relative_path.to_ascii_lowercase();
+    let name = target.name.to_ascii_lowercase();
+    let root_name = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if relative.starts_with("apps/") {
+        score += 5;
+    }
+    if relative.starts_with("frontend") || relative.contains("/frontend") {
+        score += 4;
+    }
+    if relative.starts_with("web") || relative.contains("/web") {
+        score += 4;
+    }
+    if name.contains("web") || name.contains("frontend") || name.contains("app") {
+        score += 3;
+    }
+    if relative.starts_with("backend") || relative.contains("/backend") || name.contains("api") {
+        score -= 1;
+    }
+    if root_name.contains(&name) || name.contains(&root_name) {
+        score += 1;
+    }
+    if target.available_actions.iter().any(|action| action == "dev" || action == "start" || action == "run") {
+        score += 2;
+    }
+    if target.available_actions.iter().any(|action| action == "build") {
+        score += 1;
+    }
+    if matches!(target.runtime_kind, RuntimeKind::Node) {
+        score += 1;
+    }
+
+    score
 }
 
 fn target_available_actions(target_path: &Path, runtime_kind: &RuntimeKind) -> Vec<String> {
@@ -1107,7 +1182,8 @@ fn is_deploy_script(script: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_workspace_targets, infer_actions, parse_env_template_contents, repo_name_from_git_url,
+        detect_workspace_targets, infer_actions, infer_project_from_path,
+        parse_env_template_contents, repo_name_from_git_url,
     };
     use crate::core::models::{ActionKind, RuntimeKind};
     use std::{fs, path::Path};
@@ -1312,7 +1388,99 @@ build:
         assert_eq!(targets.len(), 2);
         assert!(targets.iter().any(|target| target.relative_path == "backend"));
         assert!(targets.iter().any(|target| target.relative_path == "frontend"));
+        assert_eq!(targets[0].relative_path, "frontend");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn infers_primary_target_for_mixed_stack_repository() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::create_dir_all(root.join("backend")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "mixed-stack",
+              "scripts": {
+                "dev": "bun run --filter frontend dev"
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(root.join("bun.lock"), "").unwrap();
+        fs::write(root.join("backend/pyproject.toml"), "[project]\nname='backend'\n").unwrap();
+        fs::write(
+            root.join("frontend/package.json"),
+            r#"{
+              "name": "frontend",
+              "scripts": {
+                "dev": "vite"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.primary_target_id.as_deref(), Some("frontend"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn smokes_real_public_repositories_when_local_clones_are_present() {
+        let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT")
+            .unwrap_or_else(|_| "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string());
+        let repo_root = Path::new(&selftest_root);
+        if !repo_root.exists() {
+            return;
+        }
+
+        let repos = [
+            "Crucix",
+            "worldmonitor",
+            "vitesse",
+            "turborepo-shadcn-ui",
+            "example-voting-app",
+            "full-stack-fastapi-template",
+            "pagoda",
+        ];
+
+        for repo in repos {
+            let path = repo_root.join(repo);
+            if !path.exists() {
+                continue;
+            }
+
+            let project = infer_project_from_path(&path, None, 42300)
+                .unwrap_or_else(|| panic!("failed to infer project for {repo}"));
+            assert!(
+                !project.actions.is_empty(),
+                "expected inferred actions for {repo}"
+            );
+
+            match repo {
+                "vitesse" => assert!(
+                    project.actions.iter().any(|action| action.command.starts_with("pnpm ")),
+                    "expected pnpm commands for vitesse"
+                ),
+                "turborepo-shadcn-ui" => assert!(
+                    project.primary_target_id.is_some() && !project.workspace_targets.is_empty(),
+                    "expected a recommended primary target for turborepo-shadcn-ui"
+                ),
+                "example-voting-app" => assert!(
+                    project.has_docker_compose,
+                    "expected compose detection for example-voting-app"
+                ),
+                "pagoda" => assert!(
+                    project
+                        .actions
+                        .iter()
+                        .any(|action| action.command == "make run" || action.command == "go run ."),
+                    "expected runnable Go command for pagoda"
+                ),
+                _ => {}
+            }
+        }
     }
 }

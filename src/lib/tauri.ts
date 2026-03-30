@@ -10,6 +10,7 @@ import type {
   PortLease,
   ProjectAction,
   RouteBinding,
+  RuntimeNode,
   WorkspaceSession,
 } from "../shared/types";
 
@@ -52,6 +53,7 @@ export const api = {
     invoke<BatchActionResult>("restore_workspace_session", { sessionId }),
   runBatchAction: (projectIds: string[]) =>
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
+  listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
   stopProjects: (projectIds: string[]) =>
     invoke<BatchActionResult>("stop_projects", { projectIds }),
   restartProjects: (projectIds: string[]) =>
