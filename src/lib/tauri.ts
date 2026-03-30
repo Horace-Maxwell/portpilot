@@ -66,6 +66,8 @@ export const api = {
   listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
   startLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("start_local_service", { serviceName }),
+  stopLocalService: (serviceName: string) =>
+    invoke<LocalServicePreset>("stop_local_service", { serviceName }),
   stopProjects: (projectIds: string[]) =>
     invoke<BatchActionResult>("stop_projects", { projectIds }),
   restartProjects: (projectIds: string[]) =>

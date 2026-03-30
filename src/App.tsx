@@ -523,6 +523,18 @@ export default function App() {
     });
   }
 
+  async function handleStopService(service: LocalServicePreset) {
+    await runBusy(`service-stop-${service.name}`, async () => {
+      const stopped = await api.stopLocalService(service.name);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${stopped.label} 已停止或已不再就绪。`
+          : `${stopped.label} is stopped or no longer ready.`,
+      );
+      await refreshAll();
+    });
+  }
+
   function handleApplyEnvGroupPreset(preset: EnvGroupPreset) {
     let appliedCount = 0;
     setEnvValues((current) => {
@@ -1455,6 +1467,11 @@ export default function App() {
                   <div className="runtime-summary__meta">
                     <span>{t("Port", "端口")}: {service.port ?? "n/a"}</span>
                     <span>{t("Used by", "被以下项目使用")}: {service.used_by_projects.length}</span>
+                    {service.management_kind && (
+                      <span>
+                        {t("Managed via", "管理方式")}: {service.management_kind === "docker" ? "Docker" : t("Native", "原生")}
+                      </span>
+                    )}
                   </div>
                   {service.used_by_projects.length > 0 && (
                     <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
@@ -1470,6 +1487,15 @@ export default function App() {
                         type="button"
                       >
                         {t("Start Service", "启动服务")}
+                      </button>
+                    )}
+                    {service.ready && service.managed && (
+                      <button
+                        className="ghost-button"
+                        onClick={() => void handleStopService(service)}
+                        type="button"
+                      >
+                        {t("Stop Service", "停止服务")}
                       </button>
                     )}
                     {service.start_command && (

@@ -389,6 +389,8 @@ pub struct LocalServicePreset {
     pub ready: bool,
     pub hint: Option<String>,
     pub start_command: Option<String>,
+    pub managed: bool,
+    pub management_kind: Option<String>,
     #[serde(default)]
     pub used_by_projects: Vec<String>,
 }

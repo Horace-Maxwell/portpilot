@@ -291,6 +291,19 @@ fn start_local_service(
 }
 
 #[tauri::command]
+fn stop_local_service(
+    state: State<'_, AppState>,
+    service_name: String,
+) -> Result<LocalServicePreset, String> {
+    ensure_local_service_stopped(&service_name)?;
+    let projects = state.store.list()?;
+    collect_local_service_presets(&projects)
+        .into_iter()
+        .find(|preset| preset.name == service_name.to_ascii_lowercase())
+        .ok_or_else(|| "Service preset not found after stop".to_string())
+}
+
+#[tauri::command]
 fn list_env_group_presets(
     state: State<'_, AppState>,
     project_id: String,
@@ -1916,6 +1929,9 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                     hint: known_local_service_hint(&normalized).map(ToString::to_string),
                     start_command: local_service_start_command(&normalized)
                         .map(ToString::to_string),
+                    managed: is_managed_local_service(&normalized),
+                    management_kind: local_service_management_kind(&normalized)
+                        .map(ToString::to_string),
                     used_by_projects: Vec::new(),
                 }
             });
@@ -1924,6 +1940,8 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                 entry.used_by_projects.push(project.name.clone());
             }
             entry.ready = entry.port.map(port_is_open).unwrap_or(false);
+            entry.managed = is_managed_local_service(&normalized);
+            entry.management_kind = local_service_management_kind(&normalized).map(ToString::to_string);
         }
     }
 
@@ -1971,6 +1989,39 @@ fn ensure_local_service_running(service_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_local_service_stopped(service_name: &str) -> Result<(), String> {
+    let normalized = service_name.to_ascii_lowercase();
+    match normalized.as_str() {
+        "ollama" => {
+            Command::new("pkill")
+                .args(["-f", "ollama serve"])
+                .output()
+                .map_err(|error| format!("Failed to stop Ollama: {error}"))?;
+        }
+        "mongodb" | "meilisearch" | "redis" | "postgres" | "postgresql" | "db" | "qdrant"
+        | "chroma" | "vectordb" => stop_docker_service(&normalized)?,
+        _ => {
+            return Err(format!(
+                "PortPilot cannot stop {service_name} yet. Stop it manually if needed."
+            ))
+        }
+    }
+
+    if let Some(port) = known_local_service_port(&normalized) {
+        for _ in 0..20 {
+            if !port_is_open(port) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        return Err(format!(
+            "{service_name} stop request finished, but localhost:{port} still looks open."
+        ));
+    }
+
+    Ok(())
+}
+
 fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
     let Some(container_name) = docker_service_container_name(service_name) else {
         return Err(format!("No managed Docker preset found for {service_name}."));
@@ -2012,6 +2063,24 @@ fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn stop_docker_service(service_name: &str) -> Result<(), String> {
+    let Some(container_name) = docker_service_container_name(service_name) else {
+        return Err(format!("No managed Docker preset found for {service_name}."));
+    };
+    let stopped = Command::new("docker")
+        .args(["rm", "-f", container_name])
+        .output()
+        .map_err(|error| format!("Failed to stop {service_name}: {error}"))?;
+    if !stopped.status.success() {
+        let stderr = String::from_utf8_lossy(&stopped.stderr).trim().to_string();
+        if stderr.contains("No such container") {
+            return Ok(());
+        }
+        return Err(stderr);
+    }
+    Ok(())
+}
+
 fn docker_service_container_name(service_name: &str) -> Option<&'static str> {
     match service_name {
         "mongodb" => Some("portpilot-mongodb"),
@@ -2022,6 +2091,44 @@ fn docker_service_container_name(service_name: &str) -> Option<&'static str> {
         "chroma" | "vectordb" => Some("portpilot-chroma"),
         _ => None,
     }
+}
+
+fn local_service_management_kind(service_name: &str) -> Option<&'static str> {
+    match service_name {
+        "ollama" => Some("native"),
+        "mongodb" | "meilisearch" | "redis" | "postgres" | "postgresql" | "db" | "qdrant"
+        | "chroma" | "vectordb" => Some("docker"),
+        _ => None,
+    }
+}
+
+fn is_managed_local_service(service_name: &str) -> bool {
+    match service_name {
+        "ollama" => true,
+        "mongodb" | "meilisearch" | "redis" | "postgres" | "postgresql" | "db" | "qdrant"
+        | "chroma" | "vectordb" => docker_service_container_name(service_name)
+            .map(docker_container_exists)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn docker_container_exists(container_name: &str) -> bool {
+    let Ok(output) = Command::new("docker")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name=^{}$", container_name),
+            "--format",
+            "{{.Names}}",
+        ])
+        .output()
+    else {
+        return false;
+    };
+
+    String::from_utf8_lossy(&output.stdout).trim() == container_name
 }
 
 fn docker_service_run_args(service_name: &str) -> Option<Vec<&'static str>> {
@@ -3358,6 +3465,7 @@ pub fn run() {
             list_runtime_nodes,
             list_local_service_presets,
             start_local_service,
+            stop_local_service,
             get_project_logs,
             list_ports,
             list_routes,

@@ -264,6 +264,8 @@ export interface LocalServicePreset {
   ready: boolean;
   hint: string | null;
   start_command: string | null;
+  managed: boolean;
+  management_kind: string | null;
   used_by_projects: string[];
 }
 
