@@ -6,6 +6,7 @@ import type {
   EnvTemplateField,
   ImportedRepo,
   LogEntry,
+  LocalServicePreset,
   ManagedProject,
   PortLease,
   ProjectAction,
@@ -59,6 +60,7 @@ export const api = {
   runBatchAction: (projectIds: string[]) =>
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
   listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
+  listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
   stopProjects: (projectIds: string[]) =>
     invoke<BatchActionResult>("stop_projects", { projectIds }),
   restartProjects: (projectIds: string[]) =>

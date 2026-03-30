@@ -30,9 +30,9 @@ use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
     ComposeRequirement, ComposeServiceStatus, DoctorBlocker, DoctorCheck, DoctorPortConflict,
     DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, HealthProbeResult, ImportedRepo,
-    LogEntry, ManagedProject, PortLease, ProjectAction, ProjectRecipe, ProjectRecipeTarget,
-    RouteBinding, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
-    WorkspaceSessionProject,
+    LocalServicePreset, LogEntry, ManagedProject, PortLease, ProjectAction, ProjectRecipe,
+    ProjectRecipeTarget, RouteBinding, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus,
+    WorkspaceSession, WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
 use crate::storage::store::ProjectStore;
@@ -269,6 +269,12 @@ fn list_runtime_nodes(state: State<'_, AppState>) -> Result<Vec<RuntimeNode>, St
         .into_iter()
         .map(|project| build_runtime_node(&project, &executions, &logs))
         .collect())
+}
+
+#[tauri::command]
+fn list_local_service_presets(state: State<'_, AppState>) -> Result<Vec<LocalServicePreset>, String> {
+    let projects = state.store.list()?;
+    Ok(collect_local_service_presets(&projects))
 }
 
 #[tauri::command]
@@ -1851,6 +1857,56 @@ fn known_local_service_hint(service_name: &str) -> Option<&'static str> {
     }
 }
 
+fn local_service_label(service_name: &str) -> String {
+    match service_name.to_ascii_lowercase().as_str() {
+        "ollama" => "Ollama".to_string(),
+        "mongodb" => "MongoDB".to_string(),
+        "meilisearch" => "Meilisearch".to_string(),
+        "redis" => "Redis".to_string(),
+        "postgres" | "postgresql" | "db" => "Postgres".to_string(),
+        "qdrant" => "Qdrant".to_string(),
+        "weaviate" => "Weaviate".to_string(),
+        "chroma" | "vectordb" => "Chroma / Vector DB".to_string(),
+        "rag_api" => "RAG API".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServicePreset> {
+    let mut by_service: HashMap<String, LocalServicePreset> = HashMap::new();
+
+    for project in projects {
+        for service_name in &project.project_profile.required_services {
+            let normalized = service_name.to_ascii_lowercase();
+            let Some(port) = known_local_service_port(&normalized) else {
+                continue;
+            };
+
+            let entry = by_service.entry(normalized.clone()).or_insert_with(|| {
+                LocalServicePreset {
+                    name: normalized.clone(),
+                    label: local_service_label(&normalized),
+                    port: Some(port),
+                    ready: port_is_open(port),
+                    hint: known_local_service_hint(&normalized).map(ToString::to_string),
+                    start_command: local_service_start_command(&normalized)
+                        .map(ToString::to_string),
+                    used_by_projects: Vec::new(),
+                }
+            });
+
+            if !entry.used_by_projects.iter().any(|name| name == &project.name) {
+                entry.used_by_projects.push(project.name.clone());
+            }
+            entry.ready = entry.port.map(port_is_open).unwrap_or(false);
+        }
+    }
+
+    let mut presets = by_service.into_values().collect::<Vec<_>>();
+    presets.sort_by(|left, right| left.label.cmp(&right.label));
+    presets
+}
+
 fn local_service_start_command(service_name: &str) -> Option<&'static str> {
     match service_name.to_ascii_lowercase().as_str() {
         "ollama" => Some("ollama serve"),
@@ -2009,8 +2065,8 @@ fn fixed_port_from_project_config(project: &ManagedProject) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_compose_requirements, fixed_port_from_command, fixed_port_from_project_config,
-        infer_run_phase,
+        build_compose_requirements, collect_local_service_presets, fixed_port_from_command,
+        fixed_port_from_project_config, infer_run_phase,
         known_local_service_hint, known_local_service_port, local_service_start_command, now_iso,
         parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
     };
@@ -2225,6 +2281,54 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn collects_local_service_presets_from_projects() {
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "Open WebUI".to_string(),
+            slug: "open-webui".to_string(),
+            root_path: "/tmp/open-webui".to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Python,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(8080),
+            resolved_port: None,
+            route_subdomain_url: "http://open-webui.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/open-webui/".to_string(),
+            has_docker_compose: true,
+            has_dockerfile: false,
+            detected_files: vec!["docker-compose.yaml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::AiUi,
+                preferred_entrypoint: None,
+                required_services: vec!["ollama".to_string(), "open-webui".to_string()],
+                required_env_groups: vec!["model-providers".to_string()],
+                known_ports: vec![8080],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: Vec::new(),
+            env_profile: EnvProfile::default(),
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let presets = collect_local_service_presets(&[project]);
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].name, "ollama");
+        assert!(presets[0]
+            .used_by_projects
+            .iter()
+            .any(|name| name == "Open WebUI"));
+        assert_eq!(presets[0].start_command.as_deref(), Some("ollama serve"));
     }
 
     #[test]
@@ -2735,6 +2839,7 @@ pub fn run() {
             delete_workspace_session,
             list_action_executions,
             list_runtime_nodes,
+            list_local_service_presets,
             get_project_logs,
             list_ports,
             list_routes,

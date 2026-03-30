@@ -12,6 +12,7 @@ import type {
   ComposeRequirement,
   DoctorReport,
   ImportedRepo,
+  LocalServicePreset,
   LogEntry,
   ManagedProject,
   PortLease,
@@ -60,6 +61,7 @@ export default function App() {
   const [executions, setExecutions] = useState<ActionExecution[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [runtimeNodes, setRuntimeNodes] = useState<RuntimeNode[]>([]);
+  const [localServicePresets, setLocalServicePresets] = useState<LocalServicePreset[]>([]);
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
   const [doctorReports, setDoctorReports] = useState<Record<string, DoctorReport>>({});
@@ -262,6 +264,7 @@ export default function App() {
       nextExecutions,
       nextLogs,
       nextRuntimeNodes,
+      nextLocalServices,
       nextPorts,
       nextRoutes,
       nextSessions,
@@ -272,6 +275,7 @@ export default function App() {
         api.listActionExecutions(),
         api.getProjectLogs(),
         api.listRuntimeNodes(),
+        api.listLocalServicePresets(),
         api.listPorts(),
         api.listRoutes(),
         api.listWorkspaceSessions(),
@@ -283,6 +287,7 @@ export default function App() {
     setExecutions(nextExecutions);
     setLogs(nextLogs);
     setRuntimeNodes(nextRuntimeNodes);
+    setLocalServicePresets(nextLocalServices);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
     setSessions(nextSessions);
@@ -309,14 +314,16 @@ export default function App() {
   }
 
   async function refreshRuntimeOnly() {
-    const [nextExecutions, nextRuntimeNodes, nextPorts, nextRoutes] = await Promise.all([
+    const [nextExecutions, nextRuntimeNodes, nextLocalServices, nextPorts, nextRoutes] = await Promise.all([
       api.listActionExecutions(),
       api.listRuntimeNodes(),
+      api.listLocalServicePresets(),
       api.listPorts(),
       api.listRoutes(),
     ]);
     setExecutions(nextExecutions);
     setRuntimeNodes(nextRuntimeNodes);
+    setLocalServicePresets(nextLocalServices);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
   }
@@ -475,6 +482,18 @@ export default function App() {
           : `Copied .portpilot.json recipe for ${selectedProject.name}.`,
       );
     });
+  }
+
+  async function handleCopyServiceCommand(service: LocalServicePreset) {
+    if (!service.start_command) {
+      return;
+    }
+    await navigator.clipboard.writeText(service.start_command);
+    setStatusMessage(
+      locale === "zh-CN"
+        ? `已复制 ${service.label} 的启动命令。`
+        : `Copied start command for ${service.label}.`,
+    );
   }
 
   async function handleWriteRecipe() {
@@ -1338,6 +1357,54 @@ export default function App() {
                 <h3>{t("Unified Runtime", "统一运行时")}</h3>
                 <p>{t("See local processes, compose-backed apps, health signals, and routes in one place.", "在一个地方查看本地进程、Compose 应用、健康状态和路由。")}</p>
               </div>
+            </div>
+            <div className="panel__header">
+              <div>
+                <h3>{t("Local Service Presets", "本地服务预设")}</h3>
+                <p>{t("Track shared localhost dependencies like Ollama, Redis, MongoDB, Postgres, and Meilisearch before you launch app stacks.", "在启动应用栈之前，先跟踪像 Ollama、Redis、MongoDB、Postgres 和 Meilisearch 这样的共享 localhost 依赖。")}</p>
+              </div>
+            </div>
+            <div className="runtime-node-grid">
+              {localServicePresets.map((service) => (
+                <article key={service.name} className="runtime-node-card runtime-node-card--service">
+                  <div className="runtime-summary__row">
+                    <div>
+                      <strong>{service.label}</strong>
+                      <p>{service.hint ? localizeBackendMessage(service.hint, locale) : t("Shared localhost dependency", "共享 localhost 依赖")}</p>
+                    </div>
+                    <span className={`status-pill ${service.ready ? "status-pill--doctor-ok" : "status-pill--doctor-warn"}`}>
+                      {service.ready ? t("Ready", "就绪") : t("Missing", "缺失")}
+                    </span>
+                  </div>
+                  <div className="runtime-summary__meta">
+                    <span>{t("Port", "端口")}: {service.port ?? "n/a"}</span>
+                    <span>{t("Used by", "被以下项目使用")}: {service.used_by_projects.length}</span>
+                  </div>
+                  {service.used_by_projects.length > 0 && (
+                    <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
+                  )}
+                  {service.start_command && (
+                    <code className="runtime-node-card__log">{service.start_command}</code>
+                  )}
+                  <div className="action-row">
+                    {service.start_command && (
+                      <button
+                        className="secondary-button"
+                        onClick={() => void handleCopyServiceCommand(service)}
+                        type="button"
+                      >
+                        {t("Copy Start Command", "复制启动命令")}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {localServicePresets.length === 0 && (
+                <EmptyState
+                  title={t("No shared local services detected", "还没有检测到共享本地服务")}
+                  description={t("Import AI, gateway, or compose-heavy repos and PortPilot will surface common local dependencies here.", "导入 AI、网关或 Compose 较重的仓库后，PortPilot 会在这里显示常见本地依赖。")}
+                />
+              )}
             </div>
             <div className="runtime-node-grid">
               {runtimeNodes.map((node) => (

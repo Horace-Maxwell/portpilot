@@ -622,6 +622,13 @@ textarea {
   border: 1px solid rgba(118, 149, 196, 0.13);
 }
 
+.runtime-node-card--service {
+  background:
+    radial-gradient(circle at top right, rgba(87, 163, 255, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
+    rgba(255, 255, 255, 0.03);
+}
+
 .runtime-summary__meta,
 .runtime-node-grid,
 .log-toolbar {

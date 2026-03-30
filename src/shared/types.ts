@@ -257,6 +257,16 @@ export interface RuntimeNode {
   recommended_action: string | null;
 }
 
+export interface LocalServicePreset {
+  name: string;
+  label: string;
+  port: number | null;
+  ready: boolean;
+  hint: string | null;
+  start_command: string | null;
+  used_by_projects: string[];
+}
+
 export interface ProjectRecipeTarget {
   id: string;
   relative_path: string;

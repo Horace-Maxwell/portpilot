@@ -381,6 +381,18 @@ pub struct RuntimeNode {
     pub recommended_action: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalServicePreset {
+    pub name: String,
+    pub label: String,
+    pub port: Option<u16>,
+    pub ready: bool,
+    pub hint: Option<String>,
+    pub start_command: Option<String>,
+    #[serde(default)]
+    pub used_by_projects: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecipeTarget {
