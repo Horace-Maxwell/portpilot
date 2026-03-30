@@ -183,6 +183,14 @@ export interface HealthProbeResult {
   summary: string | null;
 }
 
+export interface ComposeServiceStatus {
+  name: string;
+  state: string | null;
+  health: string | null;
+  container_name: string | null;
+  published_ports: string[];
+}
+
 export interface RuntimeNode {
   project_id: string;
   project_name: string;
@@ -196,7 +204,7 @@ export interface RuntimeNode {
   port: number | null;
   last_log: string | null;
   health: HealthProbeResult | null;
-  compose_services: string[];
+  compose_services: ComposeServiceStatus[];
 }
 
 export interface ProjectRecipeTarget {

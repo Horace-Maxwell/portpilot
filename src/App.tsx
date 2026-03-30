@@ -1063,6 +1063,17 @@ export default function App() {
                           {selectedRuntimeNodes[0].health?.summary && (
                             <p className="runtime-summary__copy">{selectedRuntimeNodes[0].health?.summary}</p>
                           )}
+                          {selectedRuntimeNodes[0].compose_services.length > 0 && (
+                            <div className="compose-service-list">
+                              {selectedRuntimeNodes[0].compose_services.map((service) => (
+                                <article key={`${selectedRuntimeNodes[0].project_id}-${service.name}`} className="compose-service-chip">
+                                  <strong>{service.name}</strong>
+                                  <span>{service.state ?? "unknown"}</span>
+                                  {service.health && <span>{service.health}</span>}
+                                </article>
+                              ))}
+                            </div>
+                          )}
                         </article>
                       )}
                       <div className="runtime-list">
@@ -1152,6 +1163,18 @@ export default function App() {
                     <span>{node.runtime_kind}</span>
                   </div>
                   {node.health?.summary && <p className="runtime-summary__copy">{node.health.summary}</p>}
+                  {node.compose_services.length > 0 && (
+                    <div className="compose-service-list">
+                      {node.compose_services.map((service) => (
+                        <article key={`${node.project_id}-${service.name}`} className="compose-service-chip">
+                          <strong>{service.name}</strong>
+                          <span>{service.state ?? "unknown"}</span>
+                          {service.health && <span>{service.health}</span>}
+                          {service.published_ports[0] && <code>{service.published_ports[0]}</code>}
+                        </article>
+                      ))}
+                    </div>
+                  )}
                   {node.last_log && <code className="runtime-node-card__log">{node.last_log}</code>}
                   <div className="action-row">
                     <button

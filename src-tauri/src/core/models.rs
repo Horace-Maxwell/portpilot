@@ -274,6 +274,16 @@ pub struct HealthProbeResult {
     pub summary: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ComposeServiceStatus {
+    pub name: String,
+    pub state: Option<String>,
+    pub health: Option<String>,
+    pub container_name: Option<String>,
+    #[serde(default)]
+    pub published_ports: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeNode {
     pub project_id: String,
@@ -289,7 +299,7 @@ pub struct RuntimeNode {
     pub last_log: Option<String>,
     pub health: Option<HealthProbeResult>,
     #[serde(default)]
-    pub compose_services: Vec<String>,
+    pub compose_services: Vec<ComposeServiceStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

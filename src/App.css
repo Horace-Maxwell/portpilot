@@ -602,6 +602,34 @@ textarea {
   color: #a8bbd5;
 }
 
+.compose-service-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.compose-service-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(64, 110, 177, 0.14);
+  border: 1px solid rgba(118, 149, 196, 0.14);
+  color: #cfe2ff;
+}
+
+.compose-service-chip strong {
+  font-size: 0.83rem;
+}
+
+.compose-service-chip span,
+.compose-service-chip code {
+  font-size: 0.75rem;
+  color: #9fb4cf;
+}
+
 .runtime-node-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

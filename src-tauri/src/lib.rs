@@ -28,9 +28,10 @@ use crate::core::inference::{
 };
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
-    DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, ImportedRepo,
-    HealthProbeResult, LogEntry, ManagedProject, PortLease, ProjectAction, RouteBinding,
-    ProjectRecipe, ProjectRecipeTarget, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
+    ComposeServiceStatus, DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField,
+    HealthProbeResult, ImportedRepo, LogEntry, ManagedProject, PortLease, ProjectAction,
+    ProjectRecipe, ProjectRecipeTarget, RouteBinding, RunPhase, RuntimeKind, RuntimeNode,
+    RuntimeStatus, WorkspaceSession,
     WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
@@ -1063,6 +1064,12 @@ fn build_runtime_node(
         })
     });
 
+    let compose_services = if project.has_docker_compose {
+        collect_compose_services(project)
+    } else {
+        Vec::new()
+    };
+
     RuntimeNode {
         project_id: project.id.clone(),
         project_name: project.name.clone(),
@@ -1076,12 +1083,172 @@ fn build_runtime_node(
         port: project.resolved_port.or(project.preferred_port),
         last_log: execution_logs.last().map(|entry| entry.message.clone()),
         health,
-        compose_services: if project.has_docker_compose {
-            vec!["compose".to_string()]
-        } else {
-            Vec::new()
-        },
+        compose_services,
     }
+}
+
+fn collect_compose_services(project: &ManagedProject) -> Vec<ComposeServiceStatus> {
+    let root = Path::new(&project.root_path);
+    let Some(compose_file) = ["docker-compose.yml", "docker-compose.yaml", "compose.yaml"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.exists())
+    else {
+        return Vec::new();
+    };
+
+    let running = query_compose_ps(&project.root_path, &compose_file)
+        .into_iter()
+        .map(|service| (service.name.clone(), service))
+        .collect::<HashMap<_, _>>();
+    let configured = query_compose_service_names(&project.root_path, &compose_file);
+
+    if configured.is_empty() {
+        return running.into_values().collect();
+    }
+
+    configured
+        .into_iter()
+        .map(|name| {
+            running.get(&name).cloned().unwrap_or(ComposeServiceStatus {
+                name,
+                state: Some("stopped".to_string()),
+                health: None,
+                container_name: None,
+                published_ports: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn query_compose_service_names(workdir: &str, compose_file: &Path) -> Vec<String> {
+    let compose_file_str = compose_file.to_string_lossy().to_string();
+    let commands = [
+        ("docker", vec!["compose", "-f", compose_file_str.as_str(), "config", "--services"]),
+        ("docker-compose", vec!["-f", compose_file_str.as_str(), "config", "--services"]),
+    ];
+
+    for (bin, args) in commands {
+        let output = Command::new(bin)
+            .args(args)
+            .current_dir(workdir)
+            .output();
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let names = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+
+    Vec::new()
+}
+
+fn query_compose_ps(workdir: &str, compose_file: &Path) -> Vec<ComposeServiceStatus> {
+    let compose_file_str = compose_file.to_string_lossy().to_string();
+    let commands = [
+        ("docker", vec!["compose", "-f", compose_file_str.as_str(), "ps", "--format", "json"]),
+        ("docker-compose", vec!["-f", compose_file_str.as_str(), "ps", "--format", "json"]),
+    ];
+
+    for (bin, args) in commands {
+        let output = Command::new(bin)
+            .args(args)
+            .current_dir(workdir)
+            .output();
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout.is_empty() {
+            continue;
+        }
+        if let Some(items) = parse_compose_ps_json(&stdout) {
+            return items;
+        }
+    }
+
+    Vec::new()
+}
+
+fn parse_compose_ps_json(contents: &str) -> Option<Vec<ComposeServiceStatus>> {
+    let value = if contents.trim_start().starts_with('[') {
+        serde_json::from_str::<serde_json::Value>(contents).ok()
+    } else {
+        let rows = contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        Some(serde_json::Value::Array(rows))
+    }?;
+
+    let items = value.as_array()?;
+    let mut output = Vec::new();
+    for item in items {
+        let published_ports = item
+            .get("Publishers")
+            .and_then(|value| value.as_array())
+            .map(|publishers| {
+                publishers
+                    .iter()
+                    .map(|publisher| {
+                        let url = publisher
+                            .get("URL")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("127.0.0.1");
+                        let published = publisher
+                            .get("PublishedPort")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        let target = publisher
+                            .get("TargetPort")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        format!("{url}:{published}->{target}")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        output.push(ComposeServiceStatus {
+            name: item
+                .get("Service")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            state: item
+                .get("State")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            health: item
+                .get("Health")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            container_name: item
+                .get("Name")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            published_ports,
+        });
+    }
+    Some(output)
 }
 
 fn infer_run_phase(execution: &ActionExecution, logs: &[LogEntry]) -> RunPhase {
@@ -1137,6 +1304,24 @@ fn is_failure_signal(message: &str) -> bool {
 fn port_is_open(port: u16) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_compose_ps_json;
+
+    #[test]
+    fn parses_compose_ps_json_rows() {
+        let contents = r#"{"Service":"vote","Name":"example-vote-1","State":"running","Health":"healthy","Publishers":[{"URL":"0.0.0.0","PublishedPort":8080,"TargetPort":80}]}
+{"Service":"result","Name":"example-result-1","State":"running","Health":"","Publishers":[]}"#;
+
+        let services = parse_compose_ps_json(contents).expect("expected compose json");
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].name, "vote");
+        assert_eq!(services[0].state.as_deref(), Some("running"));
+        assert_eq!(services[0].published_ports[0], "0.0.0.0:8080->80");
+        assert_eq!(services[1].name, "result");
+    }
 }
 
 fn merged_env_values(project: &ManagedProject) -> HashMap<String, String> {
