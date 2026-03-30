@@ -511,6 +511,18 @@ export default function App() {
     );
   }
 
+  async function handleStartService(service: LocalServicePreset) {
+    await runBusy(`service-${service.name}`, async () => {
+      const started = await api.startLocalService(service.name);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${started.label} 已启动或已就绪。`
+          : `${started.label} is running or ready.`,
+      );
+      await refreshAll();
+    });
+  }
+
   function handleApplyEnvGroupPreset(preset: EnvGroupPreset) {
     let appliedCount = 0;
     setEnvValues((current) => {
@@ -1451,6 +1463,15 @@ export default function App() {
                     <code className="runtime-node-card__log">{service.start_command}</code>
                   )}
                   <div className="action-row">
+                    {service.start_command && !service.ready && (
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleStartService(service)}
+                        type="button"
+                      >
+                        {t("Start Service", "启动服务")}
+                      </button>
+                    )}
                     {service.start_command && (
                       <button
                         className="secondary-button"

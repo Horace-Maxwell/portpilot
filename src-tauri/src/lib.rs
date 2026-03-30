@@ -278,6 +278,19 @@ fn list_local_service_presets(state: State<'_, AppState>) -> Result<Vec<LocalSer
 }
 
 #[tauri::command]
+fn start_local_service(
+    state: State<'_, AppState>,
+    service_name: String,
+) -> Result<LocalServicePreset, String> {
+    ensure_local_service_running(&service_name)?;
+    let projects = state.store.list()?;
+    collect_local_service_presets(&projects)
+        .into_iter()
+        .find(|preset| preset.name == service_name.to_ascii_lowercase())
+        .ok_or_else(|| "Service preset not found after start".to_string())
+}
+
+#[tauri::command]
 fn list_env_group_presets(
     state: State<'_, AppState>,
     project_id: String,
@@ -1919,6 +1932,124 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
     presets
 }
 
+fn ensure_local_service_running(service_name: &str) -> Result<(), String> {
+    let normalized = service_name.to_ascii_lowercase();
+    if let Some(port) = known_local_service_port(&normalized) {
+        if port_is_open(port) {
+            return Ok(());
+        }
+    }
+
+    match normalized.as_str() {
+        "ollama" => {
+            Command::new("sh")
+                .args(["-lc", "nohup ollama serve >/tmp/portpilot-ollama.log 2>&1 &"])
+                .output()
+                .map_err(|error| format!("Failed to launch Ollama: {error}"))?;
+        }
+        "mongodb" | "meilisearch" | "redis" | "postgres" | "postgresql" | "db" | "qdrant"
+        | "chroma" | "vectordb" => ensure_docker_service_running(&normalized)?,
+        _ => {
+            return Err(format!(
+                "PortPilot cannot auto-start {service_name} yet. Copy the suggested start command instead."
+            ))
+        }
+    }
+
+    if let Some(port) = known_local_service_port(&normalized) {
+        for _ in 0..20 {
+            if port_is_open(port) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        return Err(format!(
+            "{service_name} was started, but localhost:{port} is still not ready."
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
+    let Some(container_name) = docker_service_container_name(service_name) else {
+        return Err(format!("No managed Docker preset found for {service_name}."));
+    };
+
+    let existing = Command::new("docker")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name=^{}$", container_name),
+            "--format",
+            "{{.Names}}",
+        ])
+        .output()
+        .map_err(|error| format!("Failed to inspect Docker containers: {error}"))?;
+
+    let existing_name = String::from_utf8_lossy(&existing.stdout).trim().to_string();
+    if existing_name == container_name {
+        let started = Command::new("docker")
+            .args(["start", container_name])
+            .output()
+            .map_err(|error| format!("Failed to start {service_name}: {error}"))?;
+        if !started.status.success() {
+            return Err(String::from_utf8_lossy(&started.stderr).trim().to_string());
+        }
+        return Ok(());
+    }
+
+    let args = docker_service_run_args(service_name)
+        .ok_or_else(|| format!("No run arguments found for {service_name}."))?;
+    let started = Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to run {service_name}: {error}"))?;
+    if !started.status.success() {
+        return Err(String::from_utf8_lossy(&started.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+fn docker_service_container_name(service_name: &str) -> Option<&'static str> {
+    match service_name {
+        "mongodb" => Some("portpilot-mongodb"),
+        "meilisearch" => Some("portpilot-meilisearch"),
+        "redis" => Some("portpilot-redis"),
+        "postgres" | "postgresql" | "db" => Some("portpilot-postgres"),
+        "qdrant" => Some("portpilot-qdrant"),
+        "chroma" | "vectordb" => Some("portpilot-chroma"),
+        _ => None,
+    }
+}
+
+fn docker_service_run_args(service_name: &str) -> Option<Vec<&'static str>> {
+    match service_name {
+        "mongodb" => Some(vec![
+            "run", "-d", "--name", "portpilot-mongodb", "-p", "27017:27017", "mongo:7",
+        ]),
+        "meilisearch" => Some(vec![
+            "run", "-d", "--name", "portpilot-meilisearch", "-e", "MEILI_NO_ANALYTICS=true",
+            "-p", "7700:7700", "getmeili/meilisearch:v1.12",
+        ]),
+        "redis" => Some(vec![
+            "run", "-d", "--name", "portpilot-redis", "-p", "6379:6379", "redis:7",
+        ]),
+        "postgres" | "postgresql" | "db" => Some(vec![
+            "run", "-d", "--name", "portpilot-postgres", "-e", "POSTGRES_PASSWORD=postgres",
+            "-p", "5432:5432", "postgres:16",
+        ]),
+        "qdrant" => Some(vec![
+            "run", "-d", "--name", "portpilot-qdrant", "-p", "6333:6333", "qdrant/qdrant",
+        ]),
+        "chroma" | "vectordb" => Some(vec![
+            "run", "-d", "--name", "portpilot-chroma", "-p", "8000:8000", "chromadb/chroma:latest",
+        ]),
+        _ => None,
+    }
+}
+
 fn build_env_group_presets(project: &ManagedProject) -> Vec<EnvGroupPreset> {
     let mut presets = Vec::new();
     for group in &project.project_profile.required_env_groups {
@@ -3226,6 +3357,7 @@ pub fn run() {
             list_action_executions,
             list_runtime_nodes,
             list_local_service_presets,
+            start_local_service,
             get_project_logs,
             list_ports,
             list_routes,

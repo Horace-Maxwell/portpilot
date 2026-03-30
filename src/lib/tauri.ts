@@ -64,6 +64,8 @@ export const api = {
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
   listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
   listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
+  startLocalService: (serviceName: string) =>
+    invoke<LocalServicePreset>("start_local_service", { serviceName }),
   stopProjects: (projectIds: string[]) =>
     invoke<BatchActionResult>("stop_projects", { projectIds }),
   restartProjects: (projectIds: string[]) =>
