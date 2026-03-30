@@ -6,6 +6,7 @@ import type {
   EnvGroupPreset,
   EnvTemplateField,
   ImportedRepo,
+  LocalHttpsStatus,
   LogEntry,
   LocalServicePreset,
   ManagedProject,
@@ -63,9 +64,12 @@ export const api = {
   runBatchAction: (projectIds: string[]) =>
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
   listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
+  getLocalHttpsStatus: () => invoke<LocalHttpsStatus>("get_local_https_status"),
   listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
   startLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("start_local_service", { serviceName }),
+  restartLocalService: (serviceName: string) =>
+    invoke<LocalServicePreset>("restart_local_service", { serviceName }),
   stopLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("stop_local_service", { serviceName }),
   stopProjects: (projectIds: string[]) =>

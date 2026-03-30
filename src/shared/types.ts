@@ -37,6 +37,13 @@ export type RunPhase =
   | "healthy"
   | "failed"
   | "stopped";
+export type LocalServiceStatus =
+  | "ready"
+  | "stopped"
+  | "failed"
+  | "unmanaged_already_running"
+  | "unmanaged";
+export type LocalHttpsCertificateState = "trusted" | "needs_trust" | "missing" | "error";
 
 export interface ProjectProfile {
   kind: ProjectProfileKind;
@@ -149,6 +156,7 @@ export interface DoctorReport {
   blockers: DoctorBlocker[];
   port_conflicts: DoctorPortConflict[];
   compose_requirements: ComposeRequirement[];
+  service_requirements: ComposeRequirement[];
   checks: DoctorCheck[];
 }
 
@@ -230,6 +238,12 @@ export interface HealthProbeResult {
   readiness_reason: string | null;
 }
 
+export interface LocalUrl {
+  kind: string;
+  url: string;
+  recommended: boolean;
+}
+
 export interface ComposeServiceStatus {
   name: string;
   state: string | null;
@@ -250,6 +264,7 @@ export interface RuntimeNode {
   run_phase: RunPhase | null;
   route_url: string;
   port: number | null;
+  local_urls: LocalUrl[];
   last_log: string | null;
   health: HealthProbeResult | null;
   services: ComposeServiceStatus[];
@@ -262,11 +277,21 @@ export interface LocalServicePreset {
   label: string;
   port: number | null;
   ready: boolean;
+  status: LocalServiceStatus;
   hint: string | null;
   start_command: string | null;
   managed: boolean;
   management_kind: string | null;
   used_by_projects: string[];
+}
+
+export interface LocalHttpsStatus {
+  enabled: boolean;
+  http_port: number;
+  https_port: number | null;
+  provider: string | null;
+  certificate_state: LocalHttpsCertificateState;
+  detail: string | null;
 }
 
 export interface EnvGroupPreset {

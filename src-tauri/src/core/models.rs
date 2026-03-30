@@ -110,6 +110,25 @@ pub enum RunPhase {
     Stopped,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalServiceStatus {
+    Ready,
+    Stopped,
+    Failed,
+    UnmanagedAlreadyRunning,
+    Unmanaged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalHttpsCertificateState {
+    Trusted,
+    NeedsTrust,
+    Missing,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectProfile {
@@ -283,6 +302,8 @@ pub struct DoctorReport {
     pub port_conflicts: Vec<DoctorPortConflict>,
     #[serde(default)]
     pub compose_requirements: Vec<ComposeRequirement>,
+    #[serde(default)]
+    pub service_requirements: Vec<ComposeRequirement>,
     pub checks: Vec<DoctorCheck>,
 }
 
@@ -349,6 +370,13 @@ pub struct HealthProbeResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LocalUrl {
+    pub kind: String,
+    pub url: String,
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeServiceStatus {
     pub name: String,
     pub state: Option<String>,
@@ -372,6 +400,8 @@ pub struct RuntimeNode {
     pub run_phase: Option<RunPhase>,
     pub route_url: String,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub local_urls: Vec<LocalUrl>,
     pub last_log: Option<String>,
     pub health: Option<HealthProbeResult>,
     #[serde(default)]
@@ -387,12 +417,23 @@ pub struct LocalServicePreset {
     pub label: String,
     pub port: Option<u16>,
     pub ready: bool,
+    pub status: LocalServiceStatus,
     pub hint: Option<String>,
     pub start_command: Option<String>,
     pub managed: bool,
     pub management_kind: Option<String>,
     #[serde(default)]
     pub used_by_projects: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalHttpsStatus {
+    pub enabled: bool,
+    pub http_port: u16,
+    pub https_port: Option<u16>,
+    pub provider: Option<String>,
+    pub certificate_state: LocalHttpsCertificateState,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

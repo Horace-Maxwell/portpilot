@@ -13,6 +13,7 @@ import type {
   DoctorReport,
   EnvGroupPreset,
   ImportedRepo,
+  LocalHttpsStatus,
   LocalServicePreset,
   LogEntry,
   ManagedProject,
@@ -63,6 +64,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [runtimeNodes, setRuntimeNodes] = useState<RuntimeNode[]>([]);
   const [localServicePresets, setLocalServicePresets] = useState<LocalServicePreset[]>([]);
+  const [localHttpsStatus, setLocalHttpsStatus] = useState<LocalHttpsStatus | null>(null);
   const [envGroupPresets, setEnvGroupPresets] = useState<EnvGroupPreset[]>([]);
   const [ports, setPorts] = useState<PortLease[]>([]);
   const [routes, setRoutes] = useState<RouteBinding[]>([]);
@@ -117,6 +119,10 @@ export default function App() {
         : runtimeNodes,
     [runtimeNodes, selectedProject],
   );
+  const preferredProjectUrl = (project: ManagedProject) =>
+    runtimeNodes
+      .find((node) => node.project_id === project.id)
+      ?.local_urls.find((item) => item.recommended)?.url ?? project.route_path_url;
   const filteredLogs = useMemo(
     () =>
       selectedLogs.filter((entry) => {
@@ -279,6 +285,7 @@ export default function App() {
       nextExecutions,
       nextLogs,
       nextRuntimeNodes,
+      nextLocalHttpsStatus,
       nextLocalServices,
       nextPorts,
       nextRoutes,
@@ -290,6 +297,7 @@ export default function App() {
         api.listActionExecutions(),
         api.getProjectLogs(),
         api.listRuntimeNodes(),
+        api.getLocalHttpsStatus(),
         api.listLocalServicePresets(),
         api.listPorts(),
         api.listRoutes(),
@@ -302,6 +310,7 @@ export default function App() {
     setExecutions(nextExecutions);
     setLogs(nextLogs);
     setRuntimeNodes(nextRuntimeNodes);
+    setLocalHttpsStatus(nextLocalHttpsStatus);
     setLocalServicePresets(nextLocalServices);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
@@ -329,15 +338,17 @@ export default function App() {
   }
 
   async function refreshRuntimeOnly() {
-    const [nextExecutions, nextRuntimeNodes, nextLocalServices, nextPorts, nextRoutes] = await Promise.all([
+    const [nextExecutions, nextRuntimeNodes, nextLocalHttpsStatus, nextLocalServices, nextPorts, nextRoutes] = await Promise.all([
       api.listActionExecutions(),
       api.listRuntimeNodes(),
+      api.getLocalHttpsStatus(),
       api.listLocalServicePresets(),
       api.listPorts(),
       api.listRoutes(),
     ]);
     setExecutions(nextExecutions);
     setRuntimeNodes(nextRuntimeNodes);
+    setLocalHttpsStatus(nextLocalHttpsStatus);
     setLocalServicePresets(nextLocalServices);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
@@ -381,8 +392,9 @@ export default function App() {
   async function handleRunAction(project: ManagedProject, action: ProjectAction) {
     await runBusy(`${project.id}-${action.id}`, async () => {
       if (action.kind === "open") {
-        setEmbedUrl(project.route_path_url);
-        await openUrl(project.route_path_url);
+        const url = preferredProjectUrl(project);
+        setEmbedUrl(url);
+        await openUrl(url);
         return;
       }
       await api.runProjectAction(project.id, action.id);
@@ -530,6 +542,46 @@ export default function App() {
         locale === "zh-CN"
           ? `${stopped.label} 已停止或已不再就绪。`
           : `${stopped.label} is stopped or no longer ready.`,
+      );
+      await refreshAll();
+    });
+  }
+
+  async function handleRestartService(service: LocalServicePreset) {
+    await runBusy(`service-restart-${service.name}`, async () => {
+      const restarted = await api.restartLocalService(service.name);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${restarted.label} 已重新启动。`
+          : `${restarted.label} restarted.`,
+      );
+      await refreshAll();
+    });
+  }
+
+  async function handleStartRequiredServices() {
+    if (!selectedProject) {
+      return;
+    }
+    const serviceNames = selectedProject.project_profile.required_services
+      .map((name) => name.toLowerCase())
+      .filter((name) => localServicePresets.some((service) => service.name === name && service.managed));
+    if (serviceNames.length === 0) {
+      setStatusMessage(
+        locale === "zh-CN"
+          ? "当前项目没有可由 PortPilot 自动启动的本地服务依赖。"
+          : "This project does not have any PortPilot-managed local dependencies to start.",
+      );
+      return;
+    }
+    await runBusy(`project-services-${selectedProject.id}`, async () => {
+      for (const serviceName of serviceNames) {
+        await api.startLocalService(serviceName);
+      }
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `已为 ${selectedProject.name} 启动可受管的本地依赖。`
+          : `Started managed local dependencies for ${selectedProject.name}.`,
       );
       await refreshAll();
     });
@@ -823,8 +875,9 @@ export default function App() {
                         <button
                           className="secondary-button"
                           onClick={() => {
-                            setEmbedUrl(project.route_path_url);
-                            void openUrl(project.route_path_url);
+                            const url = preferredProjectUrl(project);
+                            setEmbedUrl(url);
+                            void openUrl(url);
                           }}
                           type="button"
                         >
@@ -1043,7 +1096,7 @@ export default function App() {
                       <p>{selectedProject.root_path}</p>
                     </div>
                     <div className="action-row">
-                      <button className="secondary-button" onClick={() => void openUrl(selectedProject.route_path_url)} type="button">
+                      <button className="secondary-button" onClick={() => void openUrl(preferredProjectUrl(selectedProject))} type="button">
                         {t("Open Route", "打开路由")}
                       </button>
                       <button className="ghost-button" onClick={() => void handleCopyRecipe()} type="button">
@@ -1167,6 +1220,21 @@ export default function App() {
                           {selectedDoctorReport.compose_requirements.length > 0 && (
                             <ComposeRequirements locale={locale} requirements={selectedDoctorReport.compose_requirements} />
                           )}
+                          {selectedDoctorReport.service_requirements.length > 0 && (
+                            <div className="info-banner">
+                              <strong>{t("Required Services", "必需服务")}</strong>
+                              <p>
+                                {selectedDoctorReport.service_requirements
+                                  .map((item) => `${item.name} (${item.ready ? t("ready", "就绪") : t("missing", "缺失")})`)
+                                  .join(" • ")}
+                              </p>
+                              <div className="action-row">
+                                <button className="secondary-button" onClick={() => void handleStartRequiredServices()} type="button">
+                                  {t("Start Managed Dependencies", "启动可受管依赖")}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                           {selectedDoctorReport.port_conflicts.length > 0 && (
                             <div className="doctor-port-grid">
                               {selectedDoctorReport.port_conflicts.map((conflict) => (
@@ -1205,8 +1273,9 @@ export default function App() {
                               }
                             }}
                             onOpen={() => {
-                              setEmbedUrl(selectedProject.route_path_url);
-                              void openUrl(selectedProject.route_path_url);
+                              const url = preferredProjectUrl(selectedProject);
+                              setEmbedUrl(url);
+                              void openUrl(url);
                             }}
                             onFocusEnv={() => {
                               const envSection = document.getElementById("env-editor");
@@ -1249,6 +1318,23 @@ export default function App() {
 
                     <section className="subpanel">
                       <h4>{t("Environment", "环境变量")}</h4>
+                      {selectedProject.project_profile.required_services.length > 0 && (
+                        <div className="info-banner">
+                          <strong>{t("Required Services", "必需服务")}</strong>
+                          <p>{selectedProject.project_profile.required_services.join(" • ")}</p>
+                        </div>
+                      )}
+                      {selectedProject.project_profile.required_env_groups.length > 0 && (
+                        <div className="info-banner">
+                          <strong>{t("Recommended Start Order", "推荐启动顺序")}</strong>
+                          <p>
+                            {t(
+                              "1. Apply local defaults  2. Fill the remaining manual values  3. Start required services  4. Run the recommended entrypoint",
+                              "1. 先填入本地默认值  2. 补齐剩余手动值  3. 启动必需服务  4. 运行推荐入口",
+                            )}
+                          </p>
+                        </div>
+                      )}
                       <div id="env-editor" />
                       {envGroupPresets.length > 0 && (
                         <div className="env-preset-grid">
@@ -1266,7 +1352,7 @@ export default function App() {
                               )}
                               {preset.manual_keys.length > 0 && (
                                 <small>
-                                  {t("Still manual", "仍需手动填写")}: {preset.manual_keys.join(" • ")}
+                                  {t("Still Needs Your Input", "仍需你自己填写")}: {preset.manual_keys.join(" • ")}
                                 </small>
                               )}
                               <button
@@ -1348,6 +1434,16 @@ export default function App() {
                             <span>{t("Port", "端口")}: {selectedRuntimeNodes[0].port ?? "n/a"}</span>
                             <span>{t("Route", "路由")}: {selectedRuntimeNodes[0].route_url}</span>
                           </div>
+                          {selectedRuntimeNodes[0].local_urls.length > 0 && (
+                            <div className="runtime-summary__meta">
+                              {selectedRuntimeNodes[0].local_urls.map((localUrl) => (
+                                <span key={localUrl.url}>
+                                  {formatLocalUrlKind(localUrl.kind, locale)}: {localUrl.url}
+                                  {localUrl.recommended ? ` • ${t("Recommended", "推荐")}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           {selectedRuntimeNodes[0].health?.summary && (
                             <p className="runtime-summary__copy">{localizeBackendMessage(selectedRuntimeNodes[0].health?.summary, locale)}</p>
                           )}
@@ -1452,6 +1548,24 @@ export default function App() {
                 <p>{t("Track shared localhost dependencies like Ollama, Redis, MongoDB, Postgres, and Meilisearch before you launch app stacks.", "在启动应用栈之前，先跟踪像 Ollama、Redis、MongoDB、Postgres 和 Meilisearch 这样的共享 localhost 依赖。")}</p>
               </div>
             </div>
+            {localHttpsStatus && (
+              <article className="runtime-node-card runtime-node-card--service">
+                <div className="runtime-summary__row">
+                  <div>
+                    <strong>{t("Local HTTPS", "本地 HTTPS")}</strong>
+                    <p>{localizeBackendMessage(localHttpsStatus.detail, locale) ?? t("PortPilot can now expose localhost projects over HTTPS when a local certificate is available.", "PortPilot 现在可以在本地证书可用时通过 HTTPS 暴露 localhost 项目。")}</p>
+                  </div>
+                  <span className={`status-pill ${localHttpsStatus.certificate_state === "trusted" ? "status-pill--doctor-ok" : localHttpsStatus.enabled ? "status-pill--doctor-warn" : "status-pill--doctor-info"}`}>
+                    {formatHttpsState(localHttpsStatus, locale)}
+                  </span>
+                </div>
+                <div className="runtime-summary__meta">
+                  <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
+                  <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
+                  <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
+                </div>
+              </article>
+            )}
             <div className="runtime-node-grid">
               {localServicePresets.map((service) => (
                 <article key={service.name} className="runtime-node-card runtime-node-card--service">
@@ -1460,8 +1574,8 @@ export default function App() {
                       <strong>{service.label}</strong>
                       <p>{service.hint ? localizeBackendMessage(service.hint, locale) : t("Shared localhost dependency", "共享 localhost 依赖")}</p>
                     </div>
-                    <span className={`status-pill ${service.ready ? "status-pill--doctor-ok" : "status-pill--doctor-warn"}`}>
-                      {service.ready ? t("Ready", "就绪") : t("Missing", "缺失")}
+                    <span className={`status-pill ${service.status === "ready" ? "status-pill--doctor-ok" : service.status === "unmanaged_already_running" ? "status-pill--doctor-info" : "status-pill--doctor-warn"}`}>
+                      {formatLocalServiceStatus(service.status, locale)}
                     </span>
                   </div>
                   <div className="runtime-summary__meta">
@@ -1480,7 +1594,7 @@ export default function App() {
                     <code className="runtime-node-card__log">{service.start_command}</code>
                   )}
                   <div className="action-row">
-                    {service.start_command && !service.ready && (
+                    {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
                       <button
                         className="primary-button"
                         onClick={() => void handleStartService(service)}
@@ -1490,6 +1604,15 @@ export default function App() {
                       </button>
                     )}
                     {service.ready && service.managed && (
+                      <button
+                        className="secondary-button"
+                        onClick={() => void handleRestartService(service)}
+                        type="button"
+                      >
+                        {t("Restart Service", "重启服务")}
+                      </button>
+                    )}
+                    {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
                       <button
                         className="ghost-button"
                         onClick={() => void handleStopService(service)}
@@ -1535,6 +1658,16 @@ export default function App() {
                     <span>{t("Port", "端口")}: {node.port ?? "n/a"}</span>
                     <span>{formatRuntimeKind(node.runtime_kind, locale)}</span>
                   </div>
+                  {node.local_urls.length > 0 && (
+                    <div className="runtime-summary__meta">
+                      {node.local_urls.map((localUrl) => (
+                        <span key={`${node.project_id}-${localUrl.url}`}>
+                          {formatLocalUrlKind(localUrl.kind, locale)}: {localUrl.url}
+                          {localUrl.recommended ? ` • ${t("Recommended", "推荐")}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {node.health?.summary && <p className="runtime-summary__copy">{localizeBackendMessage(node.health.summary, locale)}</p>}
                   {node.health?.readiness_reason && (
                     <small className="runtime-summary__reason">{localizeBackendMessage(node.health.readiness_reason, locale)}</small>
@@ -1769,6 +1902,15 @@ export default function App() {
                 value={String(executions.filter((execution) => execution.status === "running").length)}
               />
               <Definition label={t("Language", "语言")} value={locale === "zh-CN" ? "中文" : "English"} />
+              {localHttpsStatus && (
+                <>
+                  <Definition label={t("Local HTTPS", "本地 HTTPS")} value={formatHttpsState(localHttpsStatus, locale)} />
+                  <Definition
+                    label={t("HTTPS Provider", "HTTPS 来源")}
+                    value={localHttpsStatus.provider ?? t("Missing", "缺失")}
+                  />
+                </>
+              )}
               <Definition label={t("Last Status", "最新状态")} value={statusMessage} />
             </section>
           </section>
@@ -1866,6 +2008,46 @@ function formatRunPhase(phase: RunPhase | null, locale: Locale) {
   return locale === "zh-CN" ? labels[phase].zh : labels[phase].en;
 }
 
+function formatLocalServiceStatus(
+  status: LocalServicePreset["status"],
+  locale: Locale,
+) {
+  const labels: Record<LocalServicePreset["status"], { en: string; zh: string }> = {
+    ready: { en: "ready", zh: "就绪" },
+    stopped: { en: "stopped", zh: "已停止" },
+    failed: { en: "failed", zh: "失败" },
+    unmanaged_already_running: { en: "external service running", zh: "外部服务已在运行" },
+    unmanaged: { en: "needs manual setup", zh: "需要手动准备" },
+  };
+  return locale === "zh-CN" ? labels[status].zh : labels[status].en;
+}
+
+function formatHttpsState(status: LocalHttpsStatus, locale: Locale) {
+  const labels: Record<LocalHttpsStatus["certificate_state"], { en: string; zh: string }> = {
+    trusted: { en: "HTTPS trusted", zh: "HTTPS 已信任" },
+    needs_trust: { en: "HTTPS needs trust", zh: "HTTPS 需信任" },
+    missing: { en: "HTTPS unavailable", zh: "HTTPS 未启用" },
+    error: { en: "HTTPS error", zh: "HTTPS 异常" },
+  };
+  return locale === "zh-CN"
+    ? labels[status.certificate_state].zh
+    : labels[status.certificate_state].en;
+}
+
+function formatLocalUrlKind(kind: string, locale: Locale) {
+  const labels: Record<string, { en: string; zh: string }> = {
+    https_subdomain: { en: "HTTPS subdomain", zh: "HTTPS 子域名" },
+    https_path: { en: "HTTPS path", zh: "HTTPS 路径" },
+    http_subdomain: { en: "HTTP subdomain", zh: "HTTP 子域名" },
+    http_path: { en: "HTTP path", zh: "HTTP 路径" },
+  };
+  const value = labels[kind];
+  if (!value) {
+    return locale === "zh-CN" ? "本地地址" : "Local URL";
+  }
+  return locale === "zh-CN" ? value.zh : value.en;
+}
+
 function formatRouteStrategy(strategy: NonNullable<ProjectProfile["route_strategy"]>, locale: Locale) {
   const labels: Record<NonNullable<ProjectProfile["route_strategy"]>, { en: string; zh: string }> = {
     gateway_path: { en: "gateway path", zh: "网关路径" },
@@ -1876,7 +2058,10 @@ function formatRouteStrategy(strategy: NonNullable<ProjectProfile["route_strateg
   return locale === "zh-CN" ? labels[strategy].zh : labels[strategy].en;
 }
 
-function localizeBackendMessage(message: string, locale: Locale) {
+function localizeBackendMessage(message: string | null | undefined, locale: Locale) {
+  if (!message) {
+    return "";
+  }
   if (locale !== "zh-CN") {
     return message;
   }
