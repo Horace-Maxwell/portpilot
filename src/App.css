@@ -602,6 +602,41 @@ textarea {
   color: #a8bbd5;
 }
 
+.runtime-summary__reason,
+.project-card__summary {
+  margin: 0;
+  color: #8fa8c7;
+  font-size: 0.82rem;
+}
+
+.doctor-blocker-list,
+.doctor-port-grid,
+.doctor-requirements__grid {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.doctor-blocker-card,
+.doctor-port-card,
+.doctor-requirement-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(118, 149, 196, 0.14);
+}
+
+.doctor-blocker-card p,
+.doctor-port-card p,
+.doctor-requirement-card p,
+.doctor-blocker-card small,
+.doctor-port-card small {
+  margin: 0;
+  color: #a9bdd7;
+}
+
 .compose-service-list {
   display: flex;
   flex-wrap: wrap;

@@ -25,11 +25,27 @@ if [[ "$DMG_CHECK" != *"accepted"* ]]; then
   exit 1
 fi
 
-MOUNT_OUTPUT="$(hdiutil attach "$DMG_PATH" -nobrowse -readonly)"
-VOLUME_PATH="$(printf '%s\n' "$MOUNT_OUTPUT" | awk 'END{print $NF}')"
+MOUNT_PLIST="$(mktemp)"
+hdiutil attach "$DMG_PATH" -nobrowse -readonly -plist >"$MOUNT_PLIST"
+VOLUME_PATH="$(python3 - "$MOUNT_PLIST" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as fh:
+    data = plistlib.load(fh)
+
+entities = data.get("system-entities", [])
+mounts = [item.get("mount-point") for item in entities if item.get("mount-point")]
+if not mounts:
+    raise SystemExit(1)
+
+print(mounts[-1])
+PY
+)"
 APP_PATH="$(find "$VOLUME_PATH" -maxdepth 1 -name '*.app' -type d | head -1)"
 
 cleanup() {
+  rm -f "${MOUNT_PLIST:-}" >/dev/null 2>&1 || true
   if [[ -n "${VOLUME_PATH:-}" ]] && [[ -d "$VOLUME_PATH" ]]; then
     hdiutil detach "$VOLUME_PATH" >/dev/null 2>&1 || true
   fi

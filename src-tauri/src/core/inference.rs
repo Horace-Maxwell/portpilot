@@ -10,8 +10,8 @@ use walkdir::WalkDir;
 
 use crate::core::models::{
     ActionKind, ActionSource, DetectedAppTarget, EnvFieldType, EnvProfile, EnvTemplateField,
-    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, ProjectRecipe, RuntimeKind,
-    RuntimeStatus,
+    ImportedRepo, ManagedProject, ProjectAction, ProjectKind, ProjectProfile,
+    ProjectProfileKind, ProjectRecipe, RouteStrategy, RuntimeKind, RuntimeStatus,
 };
 
 pub const DEFAULT_WORKSPACE_ROOT: &str = "/Users/horacedong/Desktop/Github";
@@ -67,6 +67,8 @@ fn prettify_script_label(script: &str) -> String {
 
 fn is_preferred_node_run_script(script: &str, command: &str) -> bool {
     matches!(script, "dev" | "start" | "preview" | "desktop:dev")
+        || script == "dev:all"
+        || script.starts_with("dev:")
         || script.ends_with(":dev")
         || script.ends_with(":start")
         || script.ends_with(":preview")
@@ -104,6 +106,7 @@ fn collect_preferred_node_run_scripts(scripts: &BTreeMap<String, String>) -> Vec
 fn label_for_node_run_script(script: &str) -> String {
     match script {
         "dev" => "Web Dev".to_string(),
+        "dev:all" => "Run All".to_string(),
         "start" => "Start".to_string(),
         "preview" => "Preview".to_string(),
         "desktop:dev" => "Desktop Dev".to_string(),
@@ -277,6 +280,7 @@ pub fn scan_workspace_roots(roots: &[String], gateway_port: u16) -> Vec<Imported
                     action_count: project.actions.len(),
                     workspace_target_count: project.workspace_targets.len(),
                     readme_hints: project.readme_hints,
+                    project_profile: project.project_profile,
                 });
             }
         }
@@ -295,10 +299,7 @@ pub fn infer_project_from_path(
     let pyproject = root.join("pyproject.toml");
     let cargo_toml = root.join("Cargo.toml");
     let go_mod = root.join("go.mod");
-    let compose_file = first_existing(
-        root,
-        &["docker-compose.yml", "docker-compose.yaml", "compose.yaml"],
-    );
+    let compose_file = find_compose_file(root);
     let dockerfile = root.join("Dockerfile");
 
     let runtime_kind = if package_json.exists() {
@@ -365,7 +366,8 @@ pub fn infer_project_from_path(
     let preferred_port = recipe
         .as_ref()
         .and_then(|item| item.preferred_port)
-        .or(inferred_port);
+        .or(inferred_port)
+        .or_else(|| builtin_default_port(&name));
     if let Some(recipe) = &recipe {
         merge_recipe_env_keys(&mut env_template, recipe);
         apply_recipe_targets(&mut workspace_targets, recipe);
@@ -385,6 +387,18 @@ pub fn infer_project_from_path(
     if let Some(recipe) = &recipe {
         apply_recipe_action_preferences(&mut actions, recipe);
     }
+    let project_profile = infer_project_profile(
+        root,
+        &name,
+        &runtime_kind,
+        &project_kind,
+        preferred_port,
+        compose_file.as_deref(),
+        &workspace_targets,
+        &actions,
+        &readme_hints,
+        recipe.as_ref(),
+    );
 
     let timestamp = now_iso();
 
@@ -408,6 +422,7 @@ pub fn infer_project_from_path(
         primary_target_id,
         workspace_targets,
         readme_hints,
+        project_profile,
         env_template,
         env_profile: EnvProfile::default(),
         actions,
@@ -416,10 +431,425 @@ pub fn infer_project_from_path(
     })
 }
 
+fn builtin_default_port(name: &str) -> Option<u16> {
+    match name.to_ascii_lowercase().as_str() {
+        "sillytavern" => Some(8000),
+        "open-webui" => Some(8080),
+        "openclaw" => Some(18789),
+        "librechat" => Some(3080),
+        "anything-llm" => Some(3001),
+        "flowise" => Some(3000),
+        "comfyui" => Some(8188),
+        _ => None,
+    }
+}
+
 fn read_project_recipe(root: &Path) -> Option<ProjectRecipe> {
     let path = root.join(".portpilot.json");
     let contents = fs::read_to_string(path).ok()?;
     serde_json::from_str::<ProjectRecipe>(&contents).ok()
+}
+
+fn infer_project_profile(
+    root: &Path,
+    name: &str,
+    runtime_kind: &RuntimeKind,
+    project_kind: &ProjectKind,
+    preferred_port: Option<u16>,
+    compose_file: Option<&Path>,
+    workspace_targets: &[DetectedAppTarget],
+    actions: &[ProjectAction],
+    readme_hints: &[String],
+    recipe: Option<&ProjectRecipe>,
+) -> ProjectProfile {
+    let mut profile = builtin_project_profile(
+        root,
+        name,
+        runtime_kind,
+        project_kind,
+        preferred_port,
+        compose_file,
+        workspace_targets,
+        actions,
+    );
+
+    if matches!(profile.kind, ProjectProfileKind::Unknown) {
+        profile.kind = infer_generic_profile_kind(runtime_kind, project_kind, compose_file, workspace_targets);
+    }
+
+    if profile.summary.is_none() {
+        profile.summary = Some(default_profile_summary(&profile.kind, compose_file.is_some(), readme_hints));
+    }
+
+    if profile.route_strategy.is_none() {
+        profile.route_strategy = Some(default_route_strategy(&profile.kind, compose_file.is_some()));
+    }
+
+    if profile.preferred_entrypoint.is_none() {
+        profile.preferred_entrypoint = actions
+            .iter()
+            .find(|action| matches!(action.kind, ActionKind::Run))
+            .map(|action| action.id.clone());
+    }
+
+    if profile.known_ports.is_empty() {
+        let mut ports = Vec::new();
+        if let Some(port) = preferred_port {
+            ports.push(port);
+        }
+        ports.extend(
+            workspace_targets
+                .iter()
+                .filter_map(|target| target.suggested_port),
+        );
+        ports.sort_unstable();
+        ports.dedup();
+        profile.known_ports = ports;
+    }
+
+    if let Some(recipe) = recipe {
+        apply_recipe_profile_overrides(&mut profile, recipe);
+    }
+
+    profile
+}
+
+fn builtin_project_profile(
+    _root: &Path,
+    name: &str,
+    runtime_kind: &RuntimeKind,
+    project_kind: &ProjectKind,
+    preferred_port: Option<u16>,
+    compose_file: Option<&Path>,
+    workspace_targets: &[DetectedAppTarget],
+    actions: &[ProjectAction],
+) -> ProjectProfile {
+    let lower = name.to_ascii_lowercase();
+    let compose_services = compose_file
+        .map(parse_compose_service_names_from_file)
+        .unwrap_or_default();
+
+    if lower == "sillytavern" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("server.js") || action.command.contains("npm start"))
+                .map(|action| action.id.clone()),
+            required_services: Vec::new(),
+            required_env_groups: vec!["model-providers".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(8000)],
+            route_strategy: Some(RouteStrategy::LocalhostDirect),
+            summary: Some("Local AI chat UI with a fixed localhost port and optional provider credentials.".to_string()),
+        };
+    }
+
+    if lower == "open-webui" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command == "open-webui serve")
+                .or_else(|| actions.iter().find(|action| action.command.contains("make start")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec!["open-webui".to_string(), "ollama".to_string()]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["model-providers".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(8080), 3000],
+            route_strategy: Some(RouteStrategy::Hybrid),
+            summary: Some("Hybrid local AI workspace with a Python backend, web UI, and optional compose services.".to_string()),
+        };
+    }
+
+    if lower == "openclaw" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::GatewayStack,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command == "pnpm run gateway:dev")
+                .or_else(|| actions.iter().find(|action| action.command.contains("openclaw gateway")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec!["gateway".to_string(), "webchat".to_string()]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["workspace".to_string(), "gateway".to_string(), "credentials".to_string()],
+            known_ports: vec![18789, 18790],
+            route_strategy: Some(RouteStrategy::GatewayPath),
+            summary: Some("Gateway-style localhost stack with multiple entrypoints, bridge services, and required workspace env.".to_string()),
+        };
+    }
+
+    if lower == "example-voting-app" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::ComposeStack,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("compose up"))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec![
+                    "vote".to_string(),
+                    "result".to_string(),
+                    "worker".to_string(),
+                    "redis".to_string(),
+                    "db".to_string(),
+                ]
+            } else {
+                compose_services
+            },
+            required_env_groups: Vec::new(),
+            known_ports: preferred_port.into_iter().collect(),
+            route_strategy: Some(RouteStrategy::ComposeService),
+            summary: Some("Compose-first multi-service stack that needs dependent services healthy before the app is really online.".to_string()),
+        };
+    }
+
+    if lower == "librechat" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::GatewayStack,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("start:deployed"))
+                .or_else(|| actions.iter().find(|action| action.command.contains("frontend:dev")))
+                .or_else(|| actions.iter().find(|action| action.command.contains("backend:dev")))
+                .or_else(|| actions.iter().find(|action| action.command.contains("compose up")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec![
+                    "api".to_string(),
+                    "mongodb".to_string(),
+                    "meilisearch".to_string(),
+                    "rag_api".to_string(),
+                ]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["database".to_string(), "search".to_string(), "rag".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(3080), 8000],
+            route_strategy: Some(RouteStrategy::Hybrid),
+            summary: Some("Local AI chat platform with a primary web route, backend services, vector search, and optional RAG sidecar.".to_string()),
+        };
+    }
+
+    if lower == "anything-llm" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("dev:all"))
+                .or_else(|| actions.iter().find(|action| action.command.contains("compose up")))
+                .or_else(|| actions.iter().find(|action| action.command.contains("dev:server")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec!["anything-llm".to_string()]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["llm-provider".to_string(), "frontend".to_string(), "server".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(3001), 3000],
+            route_strategy: Some(RouteStrategy::Hybrid),
+            summary: Some("Local LLM workspace with coordinated frontend, API, collector, and optional provider backends.".to_string()),
+        };
+    }
+
+    if lower == "flowise" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command == "pnpm run start")
+                .or_else(|| actions.iter().find(|action| action.command.contains("compose up")))
+                .or_else(|| actions.iter().find(|action| action.command.contains("npx flowise start")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec!["flowise".to_string()]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["app".to_string(), "database".to_string(), "queue".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(3000), 8080],
+            route_strategy: Some(RouteStrategy::Hybrid),
+            summary: Some("Node-based local AI builder with a primary UI, optional worker queue, and many compose-driven environment requirements.".to_string()),
+        };
+    }
+
+    if lower == "comfyui" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command == "python main.py")
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: Vec::new(),
+            required_env_groups: vec!["models".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(8188)],
+            route_strategy: Some(RouteStrategy::LocalhostDirect),
+            summary: Some("Local image generation UI with a fixed Python entrypoint and a well-known localhost port.".to_string()),
+        };
+    }
+
+    if compose_file.is_some() && !workspace_targets.is_empty() {
+        return ProjectProfile {
+            kind: ProjectProfileKind::FullstackMixed,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| matches!(action.kind, ActionKind::Run))
+                .map(|action| action.id.clone()),
+            required_services: compose_services,
+            required_env_groups: if matches!(runtime_kind, RuntimeKind::Python) || workspace_targets.iter().any(|target| matches!(target.runtime_kind, RuntimeKind::Python)) {
+                vec!["backend".to_string()]
+            } else {
+                Vec::new()
+            },
+            known_ports: preferred_port.into_iter().collect(),
+            route_strategy: Some(RouteStrategy::Hybrid),
+            summary: Some("Mixed-stack repo with multiple app targets and supporting local services.".to_string()),
+        };
+    }
+
+    if matches!(project_kind, ProjectKind::Compose) || compose_file.is_some() {
+        return ProjectProfile {
+            kind: ProjectProfileKind::ComposeStack,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("compose up"))
+                .map(|action| action.id.clone()),
+            required_services: compose_services,
+            required_env_groups: Vec::new(),
+            known_ports: preferred_port.into_iter().collect(),
+            route_strategy: Some(RouteStrategy::ComposeService),
+            summary: Some("Compose-backed local stack with multiple services and published ports.".to_string()),
+        };
+    }
+
+    ProjectProfile::default()
+}
+
+fn infer_generic_profile_kind(
+    runtime_kind: &RuntimeKind,
+    project_kind: &ProjectKind,
+    compose_file: Option<&Path>,
+    workspace_targets: &[DetectedAppTarget],
+) -> ProjectProfileKind {
+    if compose_file.is_some() && !workspace_targets.is_empty() {
+        return ProjectProfileKind::FullstackMixed;
+    }
+
+    if matches!(project_kind, ProjectKind::Compose) || compose_file.is_some() {
+        return ProjectProfileKind::ComposeStack;
+    }
+
+    match runtime_kind {
+        RuntimeKind::Node | RuntimeKind::Python => ProjectProfileKind::WebApp,
+        _ => ProjectProfileKind::Unknown,
+    }
+}
+
+fn default_profile_summary(
+    kind: &ProjectProfileKind,
+    has_compose: bool,
+    readme_hints: &[String],
+) -> String {
+    match kind {
+        ProjectProfileKind::AiUi => "Local AI interface with a primary web entrypoint and optional provider or model dependencies.".to_string(),
+        ProjectProfileKind::GatewayStack => "Gateway-style localhost platform with multiple runnable surfaces and route-aware entrypoints.".to_string(),
+        ProjectProfileKind::ComposeStack => "Multi-service stack that should be observed as one local platform instead of separate repos.".to_string(),
+        ProjectProfileKind::FullstackMixed => "Hybrid repo with multiple local entrypoints that PortPilot should guide in the right order.".to_string(),
+        ProjectProfileKind::WebApp => {
+            if has_compose {
+                "Web app with supporting local services and a primary routed entrypoint.".to_string()
+            } else if let Some(hint) = readme_hints.first() {
+                format!("Web app with a likely primary startup path: {hint}")
+            } else {
+                "Web app that can be brought online from one local control surface.".to_string()
+            }
+        }
+        ProjectProfileKind::Unknown => "Local project with inferred actions, routes, and runtime controls.".to_string(),
+    }
+}
+
+fn default_route_strategy(kind: &ProjectProfileKind, has_compose: bool) -> RouteStrategy {
+    match kind {
+        ProjectProfileKind::GatewayStack => RouteStrategy::GatewayPath,
+        ProjectProfileKind::ComposeStack => RouteStrategy::ComposeService,
+        ProjectProfileKind::FullstackMixed => RouteStrategy::Hybrid,
+        ProjectProfileKind::AiUi | ProjectProfileKind::WebApp => {
+            if has_compose {
+                RouteStrategy::Hybrid
+            } else {
+                RouteStrategy::LocalhostDirect
+            }
+        }
+        ProjectProfileKind::Unknown => RouteStrategy::LocalhostDirect,
+    }
+}
+
+fn apply_recipe_profile_overrides(profile: &mut ProjectProfile, recipe: &ProjectRecipe) {
+    if let Some(kind) = recipe.kind.clone() {
+        profile.kind = kind;
+    }
+    if recipe.preferred_entrypoint.is_some() {
+        profile.preferred_entrypoint = recipe.preferred_entrypoint.clone();
+    }
+    if !recipe.required_services.is_empty() {
+        profile.required_services = recipe.required_services.clone();
+    }
+    if !recipe.required_env_groups.is_empty() {
+        profile.required_env_groups = recipe.required_env_groups.clone();
+    }
+    if !recipe.known_ports.is_empty() {
+        profile.known_ports = recipe.known_ports.clone();
+    }
+    if recipe.route_strategy.is_some() {
+        profile.route_strategy = recipe.route_strategy.clone();
+    }
+}
+
+fn parse_compose_service_names_from_file(compose_file: &Path) -> Vec<String> {
+    let Ok(contents) = fs::read_to_string(compose_file) else {
+        return Vec::new();
+    };
+
+    let mut services = Vec::new();
+    let mut in_services = false;
+    for line in contents.lines() {
+        let raw = line.trim_end();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if raw.starts_with("services:") {
+            in_services = true;
+            continue;
+        }
+        if !in_services {
+            continue;
+        }
+        if !raw.starts_with("  ") {
+            break;
+        }
+        let candidate = raw.trim_start();
+        if candidate.starts_with('-') || candidate.starts_with('#') || !candidate.ends_with(':') {
+            continue;
+        }
+        if candidate.contains(' ') {
+            continue;
+        }
+        services.push(candidate.trim_end_matches(':').to_string());
+    }
+
+    services
 }
 
 fn merge_recipe_env_keys(fields: &mut Vec<EnvTemplateField>, recipe: &ProjectRecipe) {
@@ -676,7 +1106,12 @@ pub fn infer_actions(
                 } else {
                     actions.push(action("install-uv", "Install", ActionKind::Install, "uv sync || pip install -e .", &workdir, None, ActionSource::Inferred));
                 }
-                actions.push(action("run-python", "Run", ActionKind::Run, "uv run . || python -m .", &workdir, port_hint, ActionSource::Inferred));
+                let python_run_command = if root.join("main.py").exists() {
+                    "python main.py"
+                } else {
+                    "uv run . || python -m ."
+                };
+                actions.push(action("run-python", "Run", ActionKind::Run, python_run_command, &workdir, port_hint, ActionSource::Inferred));
             }
             RuntimeKind::Rust => {
                 actions.push(action("run-rust", "Run", ActionKind::Run, "cargo run", &workdir, port_hint, ActionSource::Inferred));
@@ -1012,7 +1447,10 @@ fn is_manifest_name(name: &str) -> bool {
             | "go.mod"
             | "docker-compose.yml"
             | "docker-compose.yaml"
+            | "compose.yml"
             | "compose.yaml"
+            | "deploy-compose.yml"
+            | "deploy-compose.yaml"
     )
 }
 
@@ -1040,6 +1478,24 @@ fn should_skip_dir(path: &Path) -> bool {
 
 fn first_existing(root: &Path, names: &[&str]) -> Option<PathBuf> {
     names.iter().map(|name| root.join(name)).find(|path| path.exists())
+}
+
+pub fn find_compose_file(root: &Path) -> Option<PathBuf> {
+    first_existing(
+        root,
+        &[
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+            "deploy-compose.yml",
+            "deploy-compose.yaml",
+            "docker/docker-compose.yml",
+            "docker/docker-compose.yaml",
+            "docker/compose.yml",
+            "docker/compose.yaml",
+        ],
+    )
 }
 
 fn read_package_scripts(root: &Path) -> Option<BTreeMap<String, String>> {
@@ -1266,7 +1722,7 @@ fn build_detected_target(root: &Path, target_path: &Path) -> Option<DetectedAppT
         relative_path,
         root_path: target_path.to_string_lossy().to_string(),
         runtime_kind,
-        suggested_port: infer_port_hint(target_path, first_existing(target_path, &["docker-compose.yml", "docker-compose.yaml", "compose.yaml"]).as_deref()),
+        suggested_port: infer_port_hint(target_path, find_compose_file(target_path).as_deref()),
         priority: 0,
         available_actions,
     })
@@ -1546,6 +2002,7 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
     let patterns = [
         Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
         Regex::new(r"localhost:(\d{2,5})").expect("regex"),
+        Regex::new(r"127\.0\.0\.1:(\d{2,5})").expect("regex"),
         Regex::new(r"PORT(?:=|\s+)(\d{2,5})").expect("regex"),
         Regex::new(r"port\s*:\s*(\d{2,5})").expect("regex"),
         Regex::new(r#""(\d{2,5}):\d{2,5}""#).expect("regex"),
@@ -1673,7 +2130,7 @@ mod tests {
         detect_workspace_targets, infer_actions, infer_project_from_path,
         parse_env_template_contents, repo_name_from_git_url,
     };
-    use crate::core::models::{ActionKind, RuntimeKind};
+    use crate::core::models::{ActionKind, ProjectProfileKind, RuntimeKind};
     use std::{fs, path::Path};
 
     #[test]
@@ -1947,8 +2404,14 @@ build:
             r#"{
               "version": 1,
               "primaryTargetId": "backend",
+              "kind": "gateway_stack",
               "preferredPort": 5123,
+              "preferredEntrypoint": "run-backend-dev",
               "envKeys": ["API_TOKEN"],
+              "requiredServices": ["gateway"],
+              "requiredEnvGroups": ["credentials"],
+              "knownPorts": [5123, 8123],
+              "routeStrategy": "gateway_path",
               "readmeHints": ["uv run backend.app:app"],
               "runActionId": "run-backend-dev",
               "targets": [
@@ -1970,6 +2433,9 @@ build:
         assert!(project.env_template.iter().any(|field| field.key == "API_TOKEN"));
         assert_eq!(project.readme_hints.first().map(String::as_str), Some("uv run backend.app:app"));
         assert_eq!(project.workspace_targets.first().map(|target| target.id.as_str()), Some("backend"));
+        assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
+        assert_eq!(project.project_profile.required_services, vec!["gateway".to_string()]);
+        assert_eq!(project.project_profile.known_ports, vec![5123, 8123]);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2042,6 +2508,10 @@ open-webui serve
             "SillyTavern",
             "open-webui",
             "openclaw",
+            "LibreChat",
+            "anything-llm",
+            "Flowise",
+            "ComfyUI",
         ];
 
         for repo in repos {
@@ -2067,11 +2537,12 @@ open-webui serve
                     "expected a recommended primary target for turborepo-shadcn-ui"
                 ),
                 "example-voting-app" => assert!(
-                    project.has_docker_compose,
-                    "expected compose detection for example-voting-app"
+                    project.has_docker_compose && project.project_profile.kind == ProjectProfileKind::ComposeStack,
+                    "expected compose profile detection for example-voting-app"
                 ),
                 "SillyTavern" => {
                     assert_eq!(project.preferred_port, Some(8000));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
                     assert!(
                         project
                             .actions
@@ -2082,6 +2553,7 @@ open-webui serve
                 }
                 "open-webui" => {
                     assert!(project.has_docker_compose, "expected compose detection for open-webui");
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
                     assert!(
                         project
                             .actions
@@ -2098,10 +2570,15 @@ open-webui serve
                             .any(|hint| hint.contains("open-webui serve")),
                         "expected serve hint for open-webui"
                     );
+                    assert!(
+                        project.project_profile.required_services.iter().any(|service| service == "open-webui"),
+                        "expected open-webui service requirement"
+                    );
                 }
                 "openclaw" => {
                     assert!(project.has_docker_compose, "expected compose detection for openclaw");
                     assert_eq!(project.preferred_port, Some(18789));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
                     assert!(
                         project
                             .actions
@@ -2119,6 +2596,80 @@ open-webui serve
                                 .iter()
                                 .any(|field| field.key == "OPENCLAW_WORKSPACE_DIR"),
                         "expected compose env requirements for openclaw"
+                    );
+                    assert_eq!(project.project_profile.known_ports, vec![18789, 18790]);
+                }
+                "LibreChat" => {
+                    assert!(project.has_docker_compose, "expected compose detection for LibreChat");
+                    assert_eq!(project.preferred_port, Some(3080));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::GatewayStack);
+                    assert!(
+                        project
+                            .project_profile
+                            .required_services
+                            .iter()
+                            .any(|service| service == "api" || service == "mongodb"),
+                        "expected LibreChat services to be inferred"
+                    );
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command.contains("frontend:dev")
+                                || action.command.contains("backend:dev")
+                                || action.command.contains("compose up")),
+                        "expected LibreChat runnable entrypoint"
+                    );
+                }
+                "anything-llm" => {
+                    assert!(project.has_docker_compose, "expected compose detection for anything-llm");
+                    assert_eq!(project.preferred_port, Some(3001));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command.contains("dev:all")),
+                        "expected anything-llm dev:all entrypoint"
+                    );
+                    assert!(
+                        project
+                            .project_profile
+                            .required_services
+                            .iter()
+                            .any(|service| service == "anything-llm"),
+                        "expected anything-llm service requirement"
+                    );
+                }
+                "Flowise" => {
+                    assert!(project.has_docker_compose, "expected compose detection for Flowise");
+                    assert_eq!(project.preferred_port, Some(3000));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command == "pnpm run start"
+                                || action.command.contains("compose up")),
+                        "expected Flowise start entrypoint"
+                    );
+                    assert!(
+                        project
+                            .env_template
+                            .iter()
+                            .any(|field| field.key == "PORT"),
+                        "expected Flowise compose env requirements"
+                    );
+                }
+                "ComfyUI" => {
+                    assert_eq!(project.preferred_port, Some(8188));
+                    assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
+                    assert!(
+                        project
+                            .actions
+                            .iter()
+                            .any(|action| action.command == "python main.py"),
+                        "expected ComfyUI python main entrypoint"
                     );
                 }
                 "pagoda" => assert!(

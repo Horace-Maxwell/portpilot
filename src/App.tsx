@@ -9,6 +9,7 @@ import type {
   ActionExecution,
   ActionKind,
   BatchActionResult,
+  ComposeRequirement,
   DoctorReport,
   ImportedRepo,
   LogEntry,
@@ -591,6 +592,7 @@ export default function App() {
                   const buildAction = firstAction(project, "build");
                   const deployAction = firstAction(project, "deploy");
                   const primaryTarget = projectPrimaryTarget(project);
+                  const blockerCount = doctorReports[project.id]?.blockers.length ?? 0;
                   return (
                     <article key={project.id} className="project-card">
                       <div className="project-card__top">
@@ -605,6 +607,9 @@ export default function App() {
                         <div>
                           <span className={`status-pill status-pill--${project.status}`}>
                             {project.status.replace("_", " ")}
+                          </span>
+                          <span className="status-pill status-pill--doctor-info">
+                            {formatProfileKind(project.project_profile.kind)}
                           </span>
                           <h4>{project.name}</h4>
                           <p>{project.runtime_kind} / {project.project_kind}</p>
@@ -624,7 +629,14 @@ export default function App() {
                         <span>{project.route_path_url}</span>
                         <span>{project.resolved_port ?? project.preferred_port ?? "No port hint"}</span>
                         {primaryTarget && <span>Target: {primaryTarget.name}</span>}
+                        {project.project_profile.required_services.length > 0 && (
+                          <span>{project.project_profile.required_services.length} service deps</span>
+                        )}
+                        {blockerCount > 0 && <span>{blockerCount} blocker{blockerCount === 1 ? "" : "s"}</span>}
                       </div>
+                      {project.project_profile.summary && (
+                        <p className="project-card__summary">{project.project_profile.summary}</p>
+                      )}
                       <div className="action-row">
                         {runAction && (
                           <button className="primary-button" onClick={() => void handleRunAction(project, runAction)} type="button">
@@ -767,11 +779,15 @@ export default function App() {
                     <div>
                       <h4>{candidate.name}</h4>
                       <p>{candidate.root_path}</p>
+                      {candidate.project_profile.summary && (
+                        <p className="candidate-card__hint">{candidate.project_profile.summary}</p>
+                      )}
                       {candidate.readme_hints[0] && (
                         <p className="candidate-card__hint">README hint: {candidate.readme_hints[0]}</p>
                       )}
                     </div>
                     <div className="candidate-card__meta">
+                      <span>{formatProfileKind(candidate.project_profile.kind)}</span>
                       <span>{candidate.runtime_kind}</span>
                       <span>port {candidate.suggested_port ?? "?"}</span>
                       {candidate.workspace_target_count > 0 && (
@@ -883,6 +899,13 @@ export default function App() {
                       <h4>Overview</h4>
                       <Definition label="Status" value={selectedProject.status} />
                       <Definition
+                        label="Platform Profile"
+                        value={formatProfileKind(selectedProject.project_profile.kind)}
+                      />
+                      {selectedProject.project_profile.summary && (
+                        <Definition label="Profile Summary" value={selectedProject.project_profile.summary} />
+                      )}
+                      <Definition
                         label="Recommended Target"
                         value={
                           projectPrimaryTarget(selectedProject)
@@ -893,6 +916,12 @@ export default function App() {
                       <Definition label="Port" value={String(selectedProject.resolved_port ?? selectedProject.preferred_port ?? "Unknown")} />
                       <Definition label="Subdomain" value={selectedProject.route_subdomain_url} />
                       <Definition label="Path Route" value={selectedProject.route_path_url} />
+                      {selectedProject.project_profile.route_strategy && (
+                        <Definition
+                          label="Route Strategy"
+                          value={selectedProject.project_profile.route_strategy.replace(/_/g, " ")}
+                        />
+                      )}
                       <Definition label="Detected" value={selectedProject.detected_files.join(", ")} />
                       <Definition
                         label="Recipe"
@@ -910,6 +939,18 @@ export default function App() {
                             : "Single app"
                         }
                       />
+                      {selectedProject.project_profile.required_services.length > 0 && (
+                        <Definition
+                          label="Required Services"
+                          value={selectedProject.project_profile.required_services.join(" • ")}
+                        />
+                      )}
+                      {selectedProject.project_profile.known_ports.length > 0 && (
+                        <Definition
+                          label="Known Ports"
+                          value={selectedProject.project_profile.known_ports.join(" • ")}
+                        />
+                      )}
                       {selectedProject.readme_hints.length > 0 && (
                         <Definition
                           label="README Hints"
@@ -926,6 +967,42 @@ export default function App() {
                             <div className="info-banner">
                               <strong>Recommended next step</strong>
                               <p>{selectedDoctorReport.recommended_next_step}</p>
+                            </div>
+                          )}
+                          {selectedDoctorReport.blockers.length > 0 && (
+                            <div className="doctor-blocker-list">
+                              {selectedDoctorReport.blockers.map((blocker) => (
+                                <article key={blocker.id} className="doctor-blocker-card">
+                                  <strong>{blocker.label}</strong>
+                                  <p>{blocker.summary}</p>
+                                  {(blocker.fix_label || blocker.fix_command) && (
+                                    <small>
+                                      {blocker.fix_label ?? "Suggested fix"}
+                                      {blocker.fix_command ? `: ${blocker.fix_command}` : ""}
+                                    </small>
+                                  )}
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                          {selectedDoctorReport.compose_requirements.length > 0 && (
+                            <ComposeRequirements requirements={selectedDoctorReport.compose_requirements} />
+                          )}
+                          {selectedDoctorReport.port_conflicts.length > 0 && (
+                            <div className="doctor-port-grid">
+                              {selectedDoctorReport.port_conflicts.map((conflict) => (
+                                <article key={`${selectedProject.id}-${conflict.port}`} className="doctor-port-card">
+                                  <strong>Port {conflict.port}</strong>
+                                  <p>{conflict.detail}</p>
+                                  <small>
+                                    {conflict.occupied
+                                      ? conflict.can_auto_reassign
+                                        ? "Busy, but PortPilot can reassign it."
+                                        : "Busy, and this command cannot be auto-reassigned."
+                                      : "Currently free."}
+                                  </small>
+                                </article>
+                              ))}
                             </div>
                           )}
                           <SetupWizard
@@ -1056,6 +1133,7 @@ export default function App() {
                             </span>
                           </div>
                           <div className="runtime-summary__meta">
+                            <span>Profile: {formatProfileKind(selectedRuntimeNodes[0].kind)}</span>
                             <span>Phase: {selectedRuntimeNodes[0].run_phase ?? "unknown"}</span>
                             <span>Port: {selectedRuntimeNodes[0].port ?? "n/a"}</span>
                             <span>Route: {selectedRuntimeNodes[0].route_url}</span>
@@ -1063,13 +1141,26 @@ export default function App() {
                           {selectedRuntimeNodes[0].health?.summary && (
                             <p className="runtime-summary__copy">{selectedRuntimeNodes[0].health?.summary}</p>
                           )}
-                          {selectedRuntimeNodes[0].compose_services.length > 0 && (
+                          {selectedRuntimeNodes[0].health?.readiness_reason && (
+                            <small className="runtime-summary__reason">{selectedRuntimeNodes[0].health.readiness_reason}</small>
+                          )}
+                          {selectedRuntimeNodes[0].recommended_action && (
+                            <div className="info-banner">
+                              <strong>Recommended action</strong>
+                              <p>{selectedRuntimeNodes[0].recommended_action}</p>
+                            </div>
+                          )}
+                          {!selectedRuntimeNodes[0].dependencies_ready && (
+                            <span className="status-pill status-pill--doctor-warn">Waiting for services</span>
+                          )}
+                          {selectedRuntimeNodes[0].services.length > 0 && (
                             <div className="compose-service-list">
-                              {selectedRuntimeNodes[0].compose_services.map((service) => (
+                              {selectedRuntimeNodes[0].services.map((service) => (
                                 <article key={`${selectedRuntimeNodes[0].project_id}-${service.name}`} className="compose-service-chip">
                                   <strong>{service.name}</strong>
                                   <span>{service.state ?? "unknown"}</span>
                                   {service.health && <span>{service.health}</span>}
+                                  {service.published_ports[0] && <code>{service.published_ports[0]}</code>}
                                 </article>
                               ))}
                             </div>
@@ -1158,14 +1249,27 @@ export default function App() {
                     </span>
                   </div>
                   <div className="runtime-summary__meta">
+                    <span>Profile: {formatProfileKind(node.kind)}</span>
                     <span>Phase: {node.run_phase ?? "idle"}</span>
                     <span>Port: {node.port ?? "n/a"}</span>
                     <span>{node.runtime_kind}</span>
                   </div>
                   {node.health?.summary && <p className="runtime-summary__copy">{node.health.summary}</p>}
-                  {node.compose_services.length > 0 && (
+                  {node.health?.readiness_reason && (
+                    <small className="runtime-summary__reason">{node.health.readiness_reason}</small>
+                  )}
+                  {node.recommended_action && (
+                    <div className="info-banner">
+                      <strong>Recommended action</strong>
+                      <p>{node.recommended_action}</p>
+                    </div>
+                  )}
+                  {!node.dependencies_ready && (
+                    <span className="status-pill status-pill--doctor-warn">Waiting for services</span>
+                  )}
+                  {node.services.length > 0 && (
                     <div className="compose-service-list">
-                      {node.compose_services.map((service) => (
+                      {node.services.map((service) => (
                         <article key={`${node.project_id}-${service.name}`} className="compose-service-chip">
                           <strong>{service.name}</strong>
                           <span>{service.state ?? "unknown"}</span>
@@ -1398,6 +1502,10 @@ function projectPrimaryTarget(project: ManagedProject) {
     project.workspace_targets[0] ??
     null
   );
+}
+
+function formatProfileKind(kind: ManagedProject["project_profile"]["kind"]) {
+  return kind.replace(/_/g, " ");
 }
 
 function groupLogsByExecution(logs: LogEntry[], executions: ActionExecution[]) {
@@ -1643,5 +1751,25 @@ function DoctorChecks(props: { checks: DoctorReport["checks"] }) {
         </article>
       ))}
     </div>
+  );
+}
+
+function ComposeRequirements(props: { requirements: ComposeRequirement[] }) {
+  return (
+    <section className="doctor-requirements">
+      <div className="doctor-requirements__grid">
+        {props.requirements.map((requirement) => (
+          <article key={`${requirement.kind}-${requirement.name}`} className="doctor-requirement-card">
+            <div className="doctor-card__top">
+              <strong>{requirement.name}</strong>
+              <span className={`status-pill ${requirement.ready ? "status-pill--doctor-ok" : "status-pill--doctor-warn"}`}>
+                {requirement.kind} · {requirement.ready ? "ready" : "missing"}
+              </span>
+            </div>
+            {requirement.detail && <p>{requirement.detail}</p>}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }

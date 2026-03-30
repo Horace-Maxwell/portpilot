@@ -20,6 +20,27 @@ pub enum RuntimeKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectProfileKind {
+    WebApp,
+    AiUi,
+    GatewayStack,
+    ComposeStack,
+    FullstackMixed,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteStrategy {
+    GatewayPath,
+    LocalhostDirect,
+    ComposeService,
+    Hybrid,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeStatus {
@@ -83,9 +104,26 @@ pub enum RunPhase {
     Installing,
     Starting,
     WaitingForPort,
+    WaitingForService,
     Healthy,
     Failed,
     Stopped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectProfile {
+    #[serde(default)]
+    pub kind: ProjectProfileKind,
+    pub preferred_entrypoint: Option<String>,
+    #[serde(default)]
+    pub required_services: Vec<String>,
+    #[serde(default)]
+    pub required_env_groups: Vec<String>,
+    #[serde(default)]
+    pub known_ports: Vec<u16>,
+    pub route_strategy: Option<RouteStrategy>,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +143,8 @@ pub struct ImportedRepo {
     pub workspace_target_count: usize,
     #[serde(default)]
     pub readme_hints: Vec<String>,
+    #[serde(default)]
+    pub project_profile: ProjectProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +198,8 @@ pub struct ManagedProject {
     pub workspace_targets: Vec<DetectedAppTarget>,
     #[serde(default)]
     pub readme_hints: Vec<String>,
+    #[serde(default)]
+    pub project_profile: ProjectProfile,
     pub env_template: Vec<EnvTemplateField>,
     pub env_profile: EnvProfile,
     pub actions: Vec<ProjectAction>,
@@ -200,6 +242,31 @@ pub struct DoctorCheck {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorBlocker {
+    pub id: String,
+    pub label: String,
+    pub summary: String,
+    pub fix_label: Option<String>,
+    pub fix_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorPortConflict {
+    pub port: u16,
+    pub occupied: bool,
+    pub can_auto_reassign: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeRequirement {
+    pub kind: String,
+    pub name: String,
+    pub ready: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorReport {
     pub project_id: String,
     pub generated_at: String,
@@ -210,6 +277,12 @@ pub struct DoctorReport {
     pub open_action_id: Option<String>,
     #[serde(default)]
     pub recommended_next_step: Option<String>,
+    #[serde(default)]
+    pub blockers: Vec<DoctorBlocker>,
+    #[serde(default)]
+    pub port_conflicts: Vec<DoctorPortConflict>,
+    #[serde(default)]
+    pub compose_requirements: Vec<ComposeRequirement>,
     pub checks: Vec<DoctorCheck>,
 }
 
@@ -272,6 +345,7 @@ pub struct HealthProbeResult {
     pub ready: bool,
     pub last_checked_at: Option<String>,
     pub summary: Option<String>,
+    pub readiness_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -288,6 +362,8 @@ pub struct ComposeServiceStatus {
 pub struct RuntimeNode {
     pub project_id: String,
     pub project_name: String,
+    #[serde(default)]
+    pub kind: ProjectProfileKind,
     pub runtime_kind: RuntimeKind,
     pub status: RuntimeStatus,
     pub execution_id: Option<String>,
@@ -299,7 +375,10 @@ pub struct RuntimeNode {
     pub last_log: Option<String>,
     pub health: Option<HealthProbeResult>,
     #[serde(default)]
-    pub compose_services: Vec<ComposeServiceStatus>,
+    pub services: Vec<ComposeServiceStatus>,
+    #[serde(default)]
+    pub dependencies_ready: bool,
+    pub recommended_action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -327,6 +406,18 @@ pub struct ProjectRecipe {
     pub readme_hints: Vec<String>,
     #[serde(default)]
     pub env_keys: Vec<String>,
+    #[serde(default)]
+    pub kind: Option<ProjectProfileKind>,
+    #[serde(default)]
+    pub preferred_entrypoint: Option<String>,
+    #[serde(default)]
+    pub required_services: Vec<String>,
+    #[serde(default)]
+    pub required_env_groups: Vec<String>,
+    #[serde(default)]
+    pub known_ports: Vec<u16>,
+    #[serde(default)]
+    pub route_strategy: Option<RouteStrategy>,
     #[serde(default)]
     pub targets: Vec<ProjectRecipeTarget>,
 }

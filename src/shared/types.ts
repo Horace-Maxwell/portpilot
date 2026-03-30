@@ -1,5 +1,13 @@
 export type ProjectKind = "repo" | "compose";
 export type RuntimeKind = "node" | "python" | "rust" | "go" | "compose" | "unknown";
+export type ProjectProfileKind =
+  | "web_app"
+  | "ai_ui"
+  | "gateway_stack"
+  | "compose_stack"
+  | "fullstack_mixed"
+  | "unknown";
+export type RouteStrategy = "gateway_path" | "localhost_direct" | "compose_service" | "hybrid";
 export type RuntimeStatus =
   | "stopped"
   | "starting"
@@ -25,9 +33,20 @@ export type RunPhase =
   | "installing"
   | "starting"
   | "waiting_for_port"
+  | "waiting_for_service"
   | "healthy"
   | "failed"
   | "stopped";
+
+export interface ProjectProfile {
+  kind: ProjectProfileKind;
+  preferred_entrypoint: string | null;
+  required_services: string[];
+  required_env_groups: string[];
+  known_ports: number[];
+  route_strategy: RouteStrategy | null;
+  summary: string | null;
+}
 
 export interface ImportedRepo {
   name: string;
@@ -43,6 +62,7 @@ export interface ImportedRepo {
   action_count: number;
   workspace_target_count: number;
   readme_hints: string[];
+  project_profile: ProjectProfile;
 }
 
 export interface EnvTemplateField {
@@ -89,6 +109,7 @@ export interface ManagedProject {
   primary_target_id: string | null;
   workspace_targets: DetectedAppTarget[];
   readme_hints: string[];
+  project_profile: ProjectProfile;
   env_template: EnvTemplateField[];
   env_profile: EnvProfile;
   actions: ProjectAction[];
@@ -125,7 +146,32 @@ export interface DoctorReport {
   run_action_id: string | null;
   open_action_id: string | null;
   recommended_next_step: string | null;
+  blockers: DoctorBlocker[];
+  port_conflicts: DoctorPortConflict[];
+  compose_requirements: ComposeRequirement[];
   checks: DoctorCheck[];
+}
+
+export interface DoctorBlocker {
+  id: string;
+  label: string;
+  summary: string;
+  fix_label: string | null;
+  fix_command: string | null;
+}
+
+export interface DoctorPortConflict {
+  port: number;
+  occupied: boolean;
+  can_auto_reassign: boolean;
+  detail: string;
+}
+
+export interface ComposeRequirement {
+  kind: string;
+  name: string;
+  ready: boolean;
+  detail: string | null;
 }
 
 export interface WorkspaceSessionProject {
@@ -181,6 +227,7 @@ export interface HealthProbeResult {
   ready: boolean;
   last_checked_at: string | null;
   summary: string | null;
+  readiness_reason: string | null;
 }
 
 export interface ComposeServiceStatus {
@@ -194,6 +241,7 @@ export interface ComposeServiceStatus {
 export interface RuntimeNode {
   project_id: string;
   project_name: string;
+  kind: ProjectProfileKind;
   runtime_kind: RuntimeKind;
   status: RuntimeStatus;
   execution_id: string | null;
@@ -204,7 +252,9 @@ export interface RuntimeNode {
   port: number | null;
   last_log: string | null;
   health: HealthProbeResult | null;
-  compose_services: ComposeServiceStatus[];
+  services: ComposeServiceStatus[];
+  dependencies_ready: boolean;
+  recommended_action: string | null;
 }
 
 export interface ProjectRecipeTarget {
@@ -225,6 +275,12 @@ export interface ProjectRecipe {
   open_action_id: string | null;
   readme_hints: string[];
   env_keys: string[];
+  kind: ProjectProfileKind | null;
+  preferred_entrypoint: string | null;
+  required_services: string[];
+  required_env_groups: string[];
+  known_ports: number[];
+  route_strategy: RouteStrategy | null;
   targets: ProjectRecipeTarget[];
 }
 

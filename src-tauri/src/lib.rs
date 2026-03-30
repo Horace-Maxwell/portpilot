@@ -23,15 +23,15 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::core::inference::{
-    infer_project_from_path, now_iso, parse_env_template, repo_name_from_git_url,
+    find_compose_file, infer_project_from_path, now_iso, parse_env_template, repo_name_from_git_url,
     scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
 };
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
-    ComposeServiceStatus, DoctorCheck, DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField,
-    HealthProbeResult, ImportedRepo, LogEntry, ManagedProject, PortLease, ProjectAction,
-    ProjectRecipe, ProjectRecipeTarget, RouteBinding, RunPhase, RuntimeKind, RuntimeNode,
-    RuntimeStatus, WorkspaceSession,
+    ComposeRequirement, ComposeServiceStatus, DoctorBlocker, DoctorCheck, DoctorPortConflict,
+    DoctorReport, DoctorStatus, EnvProfile, EnvTemplateField, HealthProbeResult, ImportedRepo,
+    LogEntry, ManagedProject, PortLease, ProjectAction, ProjectRecipe, ProjectRecipeTarget,
+    RouteBinding, RunPhase, RuntimeKind, RuntimeNode, RuntimeStatus, WorkspaceSession,
     WorkspaceSessionProject,
 };
 use crate::runtime::manager::RuntimeManager;
@@ -866,6 +866,12 @@ fn build_project_recipe(project: &ManagedProject) -> ProjectRecipe {
             .iter()
             .map(|field| field.key.clone())
             .collect(),
+        kind: Some(project.project_profile.kind.clone()),
+        preferred_entrypoint: project.project_profile.preferred_entrypoint.clone(),
+        required_services: project.project_profile.required_services.clone(),
+        required_env_groups: project.project_profile.required_env_groups.clone(),
+        known_ports: project.project_profile.known_ports.clone(),
+        route_strategy: project.project_profile.route_strategy.clone(),
         targets: project
             .workspace_targets
             .iter()
@@ -914,12 +920,19 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
             }
         })
         .collect::<Vec<_>>();
+    let tooling = tooling_check(project);
+    let env = env_check(project, &missing_env_keys);
+    let install = install_check(project);
+    let port_conflicts = project_port_conflicts(project);
+    let compose_requirements = build_compose_requirements(project, &env_values);
+    let port = port_check(project, &port_conflicts);
+    let blockers = build_doctor_blockers(&tooling, &env, &install, &port_conflicts, &compose_requirements);
 
     let mut checks = Vec::new();
-    checks.push(tooling_check(project));
-    checks.push(env_check(project, &missing_env_keys));
-    checks.push(install_check(project));
-    checks.push(port_check(project));
+    checks.push(tooling);
+    checks.push(env);
+    checks.push(install);
+    checks.push(port);
     if !project.workspace_targets.is_empty() {
         checks.push(DoctorCheck {
             id: "workspace-targets".to_string(),
@@ -980,22 +993,56 @@ fn build_doctor_report(project: &ManagedProject) -> DoctorReport {
         install_action_id,
         run_action_id,
         open_action_id,
-        recommended_next_step: recommend_next_step(project, &missing_env_keys),
+        recommended_next_step: recommend_next_step(
+            project,
+            &missing_env_keys,
+            &port_conflicts,
+            &compose_requirements,
+        ),
+        blockers,
+        port_conflicts,
+        compose_requirements,
         checks,
     }
 }
 
-fn recommend_next_step(project: &ManagedProject, missing_env_keys: &[String]) -> Option<String> {
+fn recommend_next_step(
+    project: &ManagedProject,
+    missing_env_keys: &[String],
+    port_conflicts: &[DoctorPortConflict],
+    compose_requirements: &[ComposeRequirement],
+) -> Option<String> {
     if tooling_check(project).status == DoctorStatus::Error {
         return Some("Install the required local tooling first.".to_string());
     }
 
     if !missing_env_keys.is_empty() {
+        if compose_requirements.iter().any(|item| item.kind == "env" && !item.ready) {
+            return Some("Fill in the required compose env values before starting this stack.".to_string());
+        }
         return Some(format!(
             "Fill in {} missing environment value{} before running.",
             missing_env_keys.len(),
             if missing_env_keys.len() == 1 { "" } else { "s" }
         ));
+    }
+
+    if port_conflicts.iter().any(|conflict| conflict.occupied && !conflict.can_auto_reassign) {
+        let port = port_conflicts
+            .iter()
+            .find(|conflict| conflict.occupied && !conflict.can_auto_reassign)
+            .map(|conflict| conflict.port)
+            .unwrap_or_default();
+        return Some(format!(
+            "Free fixed port {port} or change the command arguments before starting this project."
+        ));
+    }
+
+    if compose_requirements
+        .iter()
+        .any(|item| item.kind == "service" && !item.ready)
+    {
+        return Some("Start the required compose services first, then run the recommended entrypoint.".to_string());
     }
 
     if matches!(project.status, RuntimeStatus::Running) {
@@ -1043,14 +1090,31 @@ fn build_runtime_node(
         })
         .unwrap_or_default();
 
-    let run_phase = current_execution.map(|execution| infer_run_phase(execution, &execution_logs));
+    let services = if project.has_docker_compose {
+        collect_compose_services(project)
+    } else {
+        Vec::new()
+    };
+    let dependencies_ready = dependencies_ready(project, &services);
+    let run_phase = current_execution.map(|execution| infer_run_phase(execution, &execution_logs, dependencies_ready));
     let health = current_execution.and_then(|execution| {
         let port = execution.resolved_port.or(project.resolved_port).or(project.preferred_port);
         let url = port.map(|value| format!("http://127.0.0.1:{value}/"));
         let ready_from_logs = execution_logs.iter().rev().any(|entry| is_ready_signal(&entry.message));
         let ready = port.map(port_is_open).unwrap_or(false) || ready_from_logs;
+        let readiness_reason = if ready {
+            Some("Port opened or the process emitted a ready signal.".to_string())
+        } else if !dependencies_ready {
+            Some("Required local services are not ready yet.".to_string())
+        } else if execution.status == crate::core::models::ExecutionStatus::Running {
+            Some("The process is still booting and has not exposed a healthy route yet.".to_string())
+        } else {
+            None
+        };
         let summary = if ready {
             Some("Route is reachable and the process looks ready.".to_string())
+        } else if !dependencies_ready {
+            Some("Waiting for supporting services before this project can be considered healthy.".to_string())
         } else if execution.status == crate::core::models::ExecutionStatus::Running {
             Some("Waiting for the project to bind a port or emit a ready signal.".to_string())
         } else {
@@ -1061,18 +1125,14 @@ fn build_runtime_node(
             ready,
             last_checked_at: Some(now_iso()),
             summary,
+            readiness_reason,
         })
     });
-
-    let compose_services = if project.has_docker_compose {
-        collect_compose_services(project)
-    } else {
-        Vec::new()
-    };
 
     RuntimeNode {
         project_id: project.id.clone(),
         project_name: project.name.clone(),
+        kind: project.project_profile.kind.clone(),
         runtime_kind: project.runtime_kind.clone(),
         status: project.status.clone(),
         execution_id: current_execution.map(|execution| execution.id.clone()),
@@ -1083,17 +1143,227 @@ fn build_runtime_node(
         port: project.resolved_port.or(project.preferred_port),
         last_log: execution_logs.last().map(|entry| entry.message.clone()),
         health,
-        compose_services,
+        services,
+        dependencies_ready,
+        recommended_action: runtime_recommended_action(project, dependencies_ready),
     }
+}
+
+fn runtime_recommended_action(project: &ManagedProject, dependencies_ready: bool) -> Option<String> {
+    if !dependencies_ready && project.has_docker_compose {
+        return Some("Start the required compose services first.".to_string());
+    }
+
+    if matches!(project.status, RuntimeStatus::Running) {
+        return Some("Open the live route or inspect recent logs.".to_string());
+    }
+
+    if let Some(action_id) = &project.project_profile.preferred_entrypoint {
+        if let Some(action) = project.actions.iter().find(|action| &action.id == action_id) {
+            return Some(format!("Run {} to bring this project online.", action.label));
+        }
+    }
+
+    primary_run_action(project)
+        .map(|action| format!("Run {} to bring this project online.", action.label))
+}
+
+fn dependencies_ready(project: &ManagedProject, services: &[ComposeServiceStatus]) -> bool {
+    if !project.has_docker_compose {
+        return true;
+    }
+
+    if project.project_profile.required_services.is_empty() {
+        return true;
+    }
+
+    project.project_profile.required_services.iter().all(|required| {
+        services.iter().any(|service| {
+            service.name == *required
+                && service
+                    .state
+                    .as_deref()
+                    .map(|state| matches!(state, "running" | "healthy"))
+                    .unwrap_or(false)
+        })
+    })
+}
+
+fn build_compose_requirements(
+    project: &ManagedProject,
+    env_values: &HashMap<String, String>,
+) -> Vec<ComposeRequirement> {
+    if !project.has_docker_compose {
+        return Vec::new();
+    }
+
+    let mut requirements = Vec::new();
+    let services = collect_compose_services(project);
+    let required_services = if project.project_profile.required_services.is_empty() {
+        services.iter().map(|service| service.name.clone()).collect::<Vec<_>>()
+    } else {
+        project.project_profile.required_services.clone()
+    };
+
+    for service_name in required_services {
+        let service = services.iter().find(|item| item.name == service_name);
+        let ready = service
+            .and_then(|item| item.state.as_deref())
+            .map(|state| matches!(state, "running" | "healthy"))
+            .unwrap_or(false);
+        let detail = service.map(|item| {
+            let mut details = Vec::new();
+            if let Some(state) = &item.state {
+                details.push(format!("state: {state}"));
+            }
+            if let Some(health) = &item.health {
+                details.push(format!("health: {health}"));
+            }
+            if !item.published_ports.is_empty() {
+                details.push(format!("ports: {}", item.published_ports.join(", ")));
+            }
+            details.join(" | ")
+        });
+
+        requirements.push(ComposeRequirement {
+            kind: "service".to_string(),
+            name: service_name,
+            ready,
+            detail: detail.filter(|value| !value.is_empty()),
+        });
+    }
+
+    for field in project
+        .env_template
+        .iter()
+        .filter(|field| {
+            field.description
+                .as_deref()
+                .map(|detail| detail.contains("docker-compose"))
+                .unwrap_or(false)
+        })
+    {
+        let ready = env_values
+            .get(&field.key)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        requirements.push(ComposeRequirement {
+            kind: "env".to_string(),
+            name: field.key.clone(),
+            ready,
+            detail: Some("Required for docker compose configuration or volume mapping.".to_string()),
+        });
+    }
+
+    requirements
+}
+
+fn build_doctor_blockers(
+    tooling: &DoctorCheck,
+    env: &DoctorCheck,
+    install: &DoctorCheck,
+    port_conflicts: &[DoctorPortConflict],
+    compose_requirements: &[ComposeRequirement],
+) -> Vec<DoctorBlocker> {
+    let mut blockers = Vec::new();
+
+    if matches!(tooling.status, DoctorStatus::Error) {
+        blockers.push(DoctorBlocker {
+            id: tooling.id.clone(),
+            label: tooling.label.clone(),
+            summary: tooling.summary.clone(),
+            fix_label: tooling.fix_label.clone(),
+            fix_command: tooling.fix_command.clone(),
+        });
+    }
+
+    if matches!(env.status, DoctorStatus::Warn | DoctorStatus::Error) {
+        blockers.push(DoctorBlocker {
+            id: env.id.clone(),
+            label: env.label.clone(),
+            summary: env.summary.clone(),
+            fix_label: env.fix_label.clone(),
+            fix_command: env.fix_command.clone(),
+        });
+    }
+
+    if matches!(install.status, DoctorStatus::Warn | DoctorStatus::Error) {
+        blockers.push(DoctorBlocker {
+            id: install.id.clone(),
+            label: install.label.clone(),
+            summary: install.summary.clone(),
+            fix_label: install.fix_label.clone(),
+            fix_command: install.fix_command.clone(),
+        });
+    }
+
+    if let Some(conflict) = port_conflicts
+        .iter()
+        .find(|conflict| conflict.occupied && !conflict.can_auto_reassign)
+    {
+        blockers.push(DoctorBlocker {
+            id: "fixed-port-conflict".to_string(),
+            label: "Fixed Port Conflict".to_string(),
+            summary: format!("Port {} is busy and this command cannot be auto-reassigned.", conflict.port),
+            fix_label: Some("Free the port".to_string()),
+            fix_command: None,
+        });
+    }
+
+    let missing_compose_env = compose_requirements
+        .iter()
+        .filter(|item| item.kind == "env" && !item.ready)
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>();
+    if !missing_compose_env.is_empty() {
+        blockers.push(DoctorBlocker {
+            id: "compose-env".to_string(),
+            label: "Compose Env".to_string(),
+            summary: format!(
+                "Compose is missing {} required env value{}: {}.",
+                missing_compose_env.len(),
+                if missing_compose_env.len() == 1 { "" } else { "s" },
+                missing_compose_env.join(", ")
+            ),
+            fix_label: Some("Fill env values".to_string()),
+            fix_command: None,
+        });
+    }
+
+    blockers
+}
+
+fn project_port_conflicts(project: &ManagedProject) -> Vec<DoctorPortConflict> {
+    let Some(port) = project.preferred_port else {
+        return Vec::new();
+    };
+
+    let occupied = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().expect("socket addr"),
+        Duration::from_millis(250),
+    )
+    .is_ok();
+    let can_auto_reassign = primary_run_action(project)
+        .map(|action| fixed_port_from_command(&action.command).is_none())
+        .unwrap_or(false);
+
+    vec![DoctorPortConflict {
+        port,
+        occupied,
+        can_auto_reassign,
+        detail: if occupied && !can_auto_reassign {
+            "This project hardcodes its port, so PortPilot cannot move it automatically.".to_string()
+        } else if occupied {
+            "PortPilot can reassign this port when the primary run action starts.".to_string()
+        } else {
+            "The preferred port is currently free.".to_string()
+        },
+    }]
 }
 
 fn collect_compose_services(project: &ManagedProject) -> Vec<ComposeServiceStatus> {
     let root = Path::new(&project.root_path);
-    let Some(compose_file) = ["docker-compose.yml", "docker-compose.yaml", "compose.yaml"]
-        .iter()
-        .map(|name| root.join(name))
-        .find(|path| path.exists())
-    else {
+    let Some(compose_file) = find_compose_file(root) else {
         return Vec::new();
     };
 
@@ -1151,7 +1421,7 @@ fn query_compose_service_names(workdir: &str, compose_file: &Path) -> Vec<String
         }
     }
 
-    Vec::new()
+    parse_compose_service_names_from_file(compose_file)
 }
 
 fn query_compose_ps(workdir: &str, compose_file: &Path) -> Vec<ComposeServiceStatus> {
@@ -1251,7 +1521,47 @@ fn parse_compose_ps_json(contents: &str) -> Option<Vec<ComposeServiceStatus>> {
     Some(output)
 }
 
-fn infer_run_phase(execution: &ActionExecution, logs: &[LogEntry]) -> RunPhase {
+fn parse_compose_service_names_from_file(compose_file: &Path) -> Vec<String> {
+    let Ok(contents) = fs::read_to_string(compose_file) else {
+        return Vec::new();
+    };
+
+    let mut services = Vec::new();
+    let mut in_services = false;
+    for line in contents.lines() {
+        let raw = line.trim_end();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if raw.starts_with("services:") {
+            in_services = true;
+            continue;
+        }
+        if !in_services {
+            continue;
+        }
+        if !raw.starts_with("  ") {
+            break;
+        }
+        let candidate = raw.trim_start();
+        if candidate.starts_with('-') || candidate.starts_with('#') || !candidate.ends_with(':') {
+            continue;
+        }
+        if candidate.contains(' ') {
+            continue;
+        }
+        services.push(candidate.trim_end_matches(':').to_string());
+    }
+
+    services
+}
+
+fn infer_run_phase(
+    execution: &ActionExecution,
+    logs: &[LogEntry],
+    dependencies_ready: bool,
+) -> RunPhase {
     use crate::core::models::ExecutionStatus;
 
     match execution.status {
@@ -1266,6 +1576,10 @@ fn infer_run_phase(execution: &ActionExecution, logs: &[LogEntry]) -> RunPhase {
 
     if logs.iter().rev().any(|entry| is_ready_signal(&entry.message)) {
         return RunPhase::Healthy;
+    }
+
+    if !dependencies_ready {
+        return RunPhase::WaitingForService;
     }
 
     if execution.resolved_port.is_some() {
@@ -1306,9 +1620,39 @@ fn port_is_open(port: u16) -> bool {
     TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
 }
 
+fn fixed_port_from_command(command: &str) -> Option<u16> {
+    let patterns = [
+        regex::Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
+        regex::Regex::new(r"-p\s+(\d{2,5})").expect("regex"),
+        regex::Regex::new(r"PORT=(\d{2,5})").expect("regex"),
+    ];
+
+    for pattern in patterns {
+        if let Some(capture) = pattern.captures(command) {
+            if let Some(port) = capture
+                .get(1)
+                .and_then(|value| value.as_str().parse::<u16>().ok())
+            {
+                return Some(port);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_compose_ps_json;
+    use super::{
+        build_compose_requirements, fixed_port_from_command, infer_run_phase, now_iso,
+        parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
+    };
+    use crate::core::models::{
+        ActionExecution, ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField,
+        ManagedProject, ProjectAction, ProjectProfile,
+        ProjectProfileKind, ProjectKind, RunPhase, RuntimeKind, RuntimeStatus,
+    };
+    use std::{collections::HashMap, fs};
 
     #[test]
     fn parses_compose_ps_json_rows() {
@@ -1321,6 +1665,180 @@ mod tests {
         assert_eq!(services[0].state.as_deref(), Some("running"));
         assert_eq!(services[0].published_ports[0], "0.0.0.0:8080->80");
         assert_eq!(services[1].name, "result");
+    }
+
+    #[test]
+    fn detects_fixed_port_from_command() {
+        assert_eq!(fixed_port_from_command("npm start -- --port 8123"), Some(8123));
+        assert_eq!(fixed_port_from_command("PORT=3000 node server.js"), Some(3000));
+        assert_eq!(fixed_port_from_command("pnpm run dev"), None);
+    }
+
+    #[test]
+    fn marks_waiting_for_service_before_waiting_for_port() {
+        let execution = ActionExecution {
+            id: "exec".to_string(),
+            project_id: "project".to_string(),
+            action_id: "run".to_string(),
+            label: "Run".to_string(),
+            command: "pnpm run dev".to_string(),
+            status: crate::core::models::ExecutionStatus::Running,
+            pid: None,
+            port_hint: Some(3000),
+            resolved_port: Some(3000),
+            started_at: now_iso(),
+            finished_at: None,
+            last_log: None,
+        };
+
+        assert_eq!(infer_run_phase(&execution, &[], false), RunPhase::WaitingForService);
+    }
+
+    #[test]
+    fn reports_non_reassignable_fixed_port_conflict() {
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "SillyTavern".to_string(),
+            slug: "sillytavern".to_string(),
+            root_path: "/tmp/silly".to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(8000),
+            resolved_port: None,
+            route_subdomain_url: "http://silly.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/silly/".to_string(),
+            has_docker_compose: false,
+            has_dockerfile: false,
+            detected_files: vec!["package.json".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::AiUi,
+                preferred_entrypoint: Some("run-start".to_string()),
+                required_services: Vec::new(),
+                required_env_groups: Vec::new(),
+                known_ports: vec![8000],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: Vec::new(),
+            env_profile: EnvProfile::default(),
+            actions: vec![ProjectAction {
+                id: "run-start".to_string(),
+                label: "Start".to_string(),
+                kind: ActionKind::Run,
+                command: "npm start -- --port 8000".to_string(),
+                workdir: "/tmp/silly".to_string(),
+                env_profile: Some("default".to_string()),
+                port_hint: Some(8000),
+                healthcheck_url: None,
+                source: ActionSource::Inferred,
+            }],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let conflicts = project_port_conflicts(&project);
+        assert_eq!(conflicts.len(), 1);
+        assert!(!conflicts[0].can_auto_reassign);
+    }
+
+    #[test]
+    fn parses_compose_services_from_file_without_running_docker() {
+        let root = std::env::temp_dir().join(format!("portpilot-compose-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let compose_file = root.join("docker-compose.yml");
+        fs::write(
+            &compose_file,
+            r#"
+services:
+  gateway:
+    image: example/gateway
+  webchat:
+    image: example/webchat
+  redis:
+    image: redis:latest
+"#,
+        )
+        .unwrap();
+
+        let services = parse_compose_service_names_from_file(&compose_file);
+        assert_eq!(services, vec!["gateway", "webchat", "redis"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn compose_requirements_include_missing_env_values() {
+        let root = std::env::temp_dir().join(format!("portpilot-compose-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("docker-compose.yml"),
+            r#"
+services:
+  gateway:
+    image: example/gateway
+"#,
+        )
+        .unwrap();
+
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "OpenClaw".to_string(),
+            slug: "openclaw".to_string(),
+            root_path: root.to_string_lossy().to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(18789),
+            resolved_port: None,
+            route_subdomain_url: "http://openclaw.localhost:42300".to_string(),
+            route_path_url: "http://gateway.localhost:42300/p/openclaw/".to_string(),
+            has_docker_compose: true,
+            has_dockerfile: false,
+            detected_files: vec!["docker-compose.yml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::GatewayStack,
+                preferred_entrypoint: Some("gateway".to_string()),
+                required_services: vec!["gateway".to_string()],
+                required_env_groups: vec!["workspace".to_string()],
+                known_ports: vec![18789],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: vec![EnvTemplateField {
+                key: "OPENCLAW_WORKSPACE_DIR".to_string(),
+                default_value: None,
+                description: Some("Detected from docker-compose configuration".to_string()),
+                field_type: EnvFieldType::Text,
+            }],
+            env_profile: EnvProfile {
+                values: HashMap::new(),
+                raw_editor_text: None,
+            },
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let requirements = build_compose_requirements(&project, &HashMap::new());
+        assert!(requirements.iter().any(|item| item.kind == "service" && item.name == "gateway"));
+        assert!(
+            requirements
+                .iter()
+                .any(|item| item.kind == "env" && item.name == "OPENCLAW_WORKSPACE_DIR" && !item.ready)
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 
@@ -1493,7 +2011,7 @@ fn install_check(project: &ManagedProject) -> DoctorCheck {
     }
 }
 
-fn port_check(project: &ManagedProject) -> DoctorCheck {
+fn port_check(project: &ManagedProject, conflicts: &[DoctorPortConflict]) -> DoctorCheck {
     let port = project.resolved_port.or(project.preferred_port);
     let Some(port) = port else {
         return DoctorCheck {
@@ -1506,6 +2024,7 @@ fn port_check(project: &ManagedProject) -> DoctorCheck {
             fix_command: None,
         };
     };
+    let conflict = conflicts.iter().find(|item| item.port == port);
 
     if matches!(project.status, RuntimeStatus::Running) {
         let reachable = std::net::TcpStream::connect_timeout(
@@ -1549,8 +2068,10 @@ fn port_check(project: &ManagedProject) -> DoctorCheck {
         },
         detail: Some(if available {
             "PortPilot can start the primary run action without needing a reassignment.".to_string()
+        } else if conflict.map(|item| item.can_auto_reassign).unwrap_or(false) {
+            "PortPilot can auto-reassign the port when the project starts.".to_string()
         } else {
-            "PortPilot can auto-reassign the port, or you can free the existing process first.".to_string()
+            "This command hardcodes its port. Free the existing process or change the command arguments first.".to_string()
         }),
         fix_label: None,
         fix_command: None,
