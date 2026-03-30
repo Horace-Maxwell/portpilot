@@ -325,16 +325,18 @@ export default function App() {
   }
 
   async function refreshProjectsOnly() {
-    const [nextProjects, nextExecutions, nextRuntimeNodes, nextPorts, nextRoutes] = await Promise.all([
+    const [nextProjects, nextExecutions, nextRuntimeNodes, nextLocalServices, nextPorts, nextRoutes] = await Promise.all([
       api.listProjects(),
       api.listActionExecutions(),
       api.listRuntimeNodes(),
+      api.listLocalServicePresets(),
       api.listPorts(),
       api.listRoutes(),
     ]);
     setProjects(nextProjects);
     setExecutions(nextExecutions);
     setRuntimeNodes(nextRuntimeNodes);
+    setLocalServicePresets(nextLocalServices);
     setPorts(nextPorts);
     setRoutes(nextRoutes);
   }
@@ -400,14 +402,14 @@ export default function App() {
         return;
       }
       await api.runProjectAction(project.id, action.id);
-      await refreshProjectsOnly();
+      await refreshAll();
     });
   }
 
   async function handleRestart(project: ManagedProject, action: ProjectAction) {
     await runBusy(`restart-${project.id}`, async () => {
       await api.restartProject(project.id, action.id);
-      await refreshProjectsOnly();
+      await refreshAll();
     });
   }
 
@@ -425,7 +427,7 @@ export default function App() {
     }
     await runBusy(`stop-${running.id}`, async () => {
       await api.stopActionExecution(running.id);
-      await refreshProjectsOnly();
+      await refreshAll();
     });
   }
 
@@ -522,6 +524,15 @@ export default function App() {
       locale === "zh-CN"
         ? `已复制 ${service.label} 的启动命令。`
         : `Copied start command for ${service.label}.`,
+    );
+  }
+
+  async function handleCopyText(value: string, label: string) {
+    await navigator.clipboard.writeText(value);
+    setStatusMessage(
+      locale === "zh-CN"
+        ? `已复制${label}。`
+        : `Copied ${label}.`,
     );
   }
 
@@ -1241,6 +1252,40 @@ export default function App() {
                                       {blocker.fix_command ? `: ${blocker.fix_command}` : ""}
                                     </small>
                                   )}
+                                  <div className="action-row">
+                                    {blocker.id === "localhost-https" && (
+                                      <button
+                                        className="secondary-button"
+                                        onClick={() => void handleInstallTrustedHttps()}
+                                        type="button"
+                                      >
+                                        {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
+                                      </button>
+                                    )}
+                                    {blocker.id === "local-services" && (
+                                      <button
+                                        className="secondary-button"
+                                        onClick={() => void handleStartRequiredServices()}
+                                        type="button"
+                                      >
+                                        {t("Start Managed Dependencies", "启动可受管依赖")}
+                                      </button>
+                                    )}
+                                    {blocker.fix_command && (
+                                      <button
+                                        className="ghost-button"
+                                        onClick={() =>
+                                          void handleCopyText(
+                                            blocker.fix_command ?? "",
+                                            locale === "zh-CN" ? "命令" : "command",
+                                          )
+                                        }
+                                        type="button"
+                                      >
+                                        {t("Copy Command", "复制命令")}
+                                      </button>
+                                    )}
+                                  </div>
                                 </article>
                               ))}
                             </div>

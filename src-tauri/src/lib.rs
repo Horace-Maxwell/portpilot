@@ -293,7 +293,16 @@ fn refresh_local_https_status(state: State<'_, AppState>) -> Result<LocalHttpsSt
 #[tauri::command]
 fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, String> {
     let current = state.local_https_status.lock().clone();
-    let refreshed = gateway::install_local_https(&state.data_dir, &current)?;
+    let mut refreshed = gateway::install_local_https(&state.data_dir, &current)?;
+    if !current.enabled
+        && !matches!(refreshed.certificate_state, LocalHttpsCertificateState::Error)
+    {
+        refreshed = tauri::async_runtime::block_on(gateway::start_https_listener(
+            Arc::clone(&state.store),
+            *state.gateway_port.lock(),
+            state.data_dir.clone(),
+        ))?;
+    }
     *state.local_https_status.lock() = refreshed.clone();
     Ok(refreshed)
 }
@@ -505,12 +514,7 @@ fn restore_workspace_session(
             continue;
         };
 
-        match state.runtime.run_action(
-            app.clone(),
-            Arc::clone(&state.store),
-            project.clone(),
-            action,
-        ) {
+        match run_project_with_dependencies(app.clone(), &state, project.clone(), action) {
             Ok(execution) => items.push(BatchActionItemResult {
                 project_id: project.id.clone(),
                 project_name: project.name.clone(),
@@ -583,6 +587,60 @@ fn restart_project(
     run_project_action(app, state, project_id, action_id)
 }
 
+fn ensure_project_local_services_ready(project: &ManagedProject) -> Result<(), String> {
+    let mut blocking = Vec::new();
+    for service_name in &project.project_profile.required_services {
+        let normalized = service_name.to_ascii_lowercase();
+        let Some(_) = known_local_service_port(&normalized) else {
+            continue;
+        };
+
+        match local_service_status(&normalized) {
+            LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning => {}
+            LocalServiceStatus::Stopped if can_manage_local_service(&normalized) => {
+                ensure_local_service_running(&normalized)?
+            }
+            LocalServiceStatus::Failed if can_manage_local_service(&normalized) => {
+                let _ = ensure_local_service_stopped(&normalized);
+                ensure_local_service_running(&normalized)?
+            }
+            _ => {
+                blocking.push(normalized);
+            }
+        }
+    }
+
+    if blocking.is_empty() {
+        return Ok(());
+    }
+
+    let primary = blocking.first().cloned().unwrap_or_default();
+    let hint = local_service_start_command(&primary)
+        .map(|command| format!(" Try `{command}` first."))
+        .unwrap_or_default();
+    Err(format!(
+        "Start the required local service{} first: {}.{}",
+        if blocking.len() == 1 { "" } else { "s" },
+        blocking.join(", "),
+        hint
+    ))
+}
+
+fn run_project_with_dependencies(
+    app: AppHandle,
+    state: &State<'_, AppState>,
+    project: ManagedProject,
+    action: ProjectAction,
+) -> Result<ActionExecution, String> {
+    if matches!(action.kind, ActionKind::Run) {
+        ensure_project_local_services_ready(&project)?;
+    }
+
+    state
+        .runtime
+        .run_action(app, Arc::clone(&state.store), project, action)
+}
+
 #[tauri::command]
 fn run_project_action(
     app: AppHandle,
@@ -605,9 +663,7 @@ fn run_project_action(
         return Err("Open actions should be handled by the UI.".to_string());
     }
 
-    state
-        .runtime
-        .run_action(app, Arc::clone(&state.store), project, action)
+    run_project_with_dependencies(app, &state, project, action)
 }
 
 #[tauri::command]
@@ -720,9 +776,9 @@ fn execute_batch_action(
                     continue;
                 }
 
-                match state.runtime.run_action(
+                match run_project_with_dependencies(
                     app.clone(),
-                    Arc::clone(&state.store),
+                    &state,
                     project.clone(),
                     action.clone(),
                 ) {
@@ -802,9 +858,9 @@ fn execute_batch_action(
                     );
                 }
 
-                match state.runtime.run_action(
+                match run_project_with_dependencies(
                     app.clone(),
-                    Arc::clone(&state.store),
+                    &state,
                     project.clone(),
                     action.clone(),
                 ) {
@@ -3481,6 +3537,128 @@ mod tests {
         );
         let rag = presets.iter().find(|preset| preset.id == "rag").unwrap();
         assert_eq!(rag.values.get("RAG_PORT").map(String::as_str), Some("8001"));
+    }
+
+    #[test]
+    fn builds_flowise_local_presets_for_primary_groups() {
+        let root = std::env::temp_dir().join(format!("portpilot-flowise-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join(".portpilot")).unwrap();
+
+        let project = ManagedProject {
+            id: "project".to_string(),
+            name: "Flowise".to_string(),
+            slug: "flowise".to_string(),
+            root_path: root.to_string_lossy().to_string(),
+            git_url: None,
+            project_kind: ProjectKind::Compose,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(3000),
+            resolved_port: None,
+            route_subdomain_url: String::new(),
+            route_path_url: String::new(),
+            has_docker_compose: true,
+            has_dockerfile: false,
+            detected_files: vec!["docker/docker-compose.yml".to_string()],
+            primary_target_id: None,
+            workspace_targets: Vec::new(),
+            readme_hints: Vec::new(),
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::AiUi,
+                preferred_entrypoint: None,
+                required_services: vec!["flowise".to_string(), "redis".to_string()],
+                required_env_groups: vec!["app".to_string(), "database".to_string(), "queue".to_string()],
+                known_ports: vec![3000],
+                route_strategy: None,
+                summary: None,
+            },
+            env_template: vec![
+                EnvTemplateField {
+                    key: "APP_URL".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "DATABASE_HOST".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "DATABASE_PORT".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "DATABASE_USER".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "DATABASE_PASSWORD".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Secret,
+                },
+                EnvTemplateField {
+                    key: "REDIS_URL".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "QUEUE_NAME".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+            ],
+            env_profile: EnvProfile::default(),
+            actions: Vec::new(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+
+        let presets = build_env_group_presets(&project);
+        let app = presets.iter().find(|preset| preset.id == "app").unwrap();
+        assert_eq!(
+            app.values.get("APP_URL").map(String::as_str),
+            Some("http://127.0.0.1:3000")
+        );
+
+        let database = presets.iter().find(|preset| preset.id == "database").unwrap();
+        assert_eq!(
+            database.values.get("DATABASE_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            database.values.get("DATABASE_PORT").map(String::as_str),
+            Some("5432")
+        );
+        assert_eq!(
+            database.values.get("DATABASE_USER").map(String::as_str),
+            Some("postgres")
+        );
+        assert_eq!(
+            database.values.get("DATABASE_PASSWORD").map(String::as_str),
+            Some("postgres")
+        );
+
+        let queue = presets.iter().find(|preset| preset.id == "queue").unwrap();
+        assert_eq!(
+            queue.values.get("REDIS_URL").map(String::as_str),
+            Some("redis://127.0.0.1:6379")
+        );
+        assert_eq!(
+            queue.values.get("QUEUE_NAME").map(String::as_str),
+            Some("flowise-queue")
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

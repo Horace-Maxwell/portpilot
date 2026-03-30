@@ -57,6 +57,22 @@ pub async fn start_gateway(
     Ok((http_port, https_status))
 }
 
+pub async fn start_https_listener(
+    store: Arc<ProjectStore>,
+    http_port: u16,
+    data_dir: PathBuf,
+) -> Result<LocalHttpsStatus, String> {
+    let state = GatewayState {
+        client: Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| error.to_string())?,
+        store,
+    };
+
+    Ok(start_https_gateway(state, http_port, data_dir).await)
+}
+
 async fn start_https_gateway(
     state: GatewayState,
     http_port: u16,
