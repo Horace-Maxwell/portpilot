@@ -285,6 +285,7 @@ export interface LocalServicePreset {
   status: LocalServiceStatus;
   ready_detail: string | null;
   hint: string | null;
+  setup_command: string | null;
   start_command: string | null;
   stop_command: string | null;
   managed: boolean;
@@ -298,6 +299,7 @@ export interface LocalHttpsStatus {
   https_port: number | null;
   provider: string | null;
   certificate_state: LocalHttpsCertificateState;
+  restart_required: boolean;
   detail: string | null;
 }
 

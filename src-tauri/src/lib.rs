@@ -293,7 +293,8 @@ fn refresh_local_https_status(state: State<'_, AppState>) -> Result<LocalHttpsSt
 #[tauri::command]
 fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, String> {
     let current = state.local_https_status.lock().clone();
-    let mut refreshed = gateway::install_local_https(&state.data_dir, &current)?;
+    let install_result = gateway::install_local_https(&state.data_dir, &current)?;
+    let mut refreshed = install_result.clone();
     if !current.enabled
         && !matches!(refreshed.certificate_state, LocalHttpsCertificateState::Error)
     {
@@ -302,6 +303,14 @@ fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, S
             *state.gateway_port.lock(),
             state.data_dir.clone(),
         ))?;
+        if matches!(
+            install_result.certificate_state,
+            LocalHttpsCertificateState::NeedsTrust
+        ) {
+            refreshed.certificate_state = LocalHttpsCertificateState::NeedsTrust;
+            refreshed.detail = install_result.detail.clone();
+            refreshed.restart_required = false;
+        }
     }
     *state.local_https_status.lock() = refreshed.clone();
     Ok(refreshed)
@@ -615,11 +624,11 @@ fn ensure_project_local_services_ready(project: &ManagedProject) -> Result<(), S
     }
 
     let primary = blocking.first().cloned().unwrap_or_default();
-    let hint = local_service_start_command(&primary)
+    let hint = local_service_action_command(&primary)
         .map(|command| format!(" Try `{command}` first."))
         .unwrap_or_default();
     Err(format!(
-        "Start the required local service{} first: {}.{}",
+        "Start or install the required local service{} first: {}.{}",
         if blocking.len() == 1 { "" } else { "s" },
         blocking.join(", "),
         hint
@@ -1106,6 +1115,7 @@ fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus
     let install = install_check(project);
     let port_conflicts = project_port_conflicts(project);
     let compose_requirements = build_compose_requirements(project, &env_values);
+    let env_groups = available_env_groups(project);
     let service_requirements = compose_requirements
         .iter()
         .filter(|item| item.kind == "service" || item.kind == "local-service")
@@ -1118,7 +1128,7 @@ fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus
         &install,
         &port_conflicts,
         &compose_requirements,
-        &project.project_profile.required_env_groups,
+        &env_groups,
         https_status,
     );
 
@@ -1192,6 +1202,7 @@ fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus
         open_action_id,
         recommended_next_step: recommend_next_step(
             project,
+            &env_groups,
             &missing_env_keys,
             &port_conflicts,
             &compose_requirements,
@@ -1206,6 +1217,7 @@ fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus
 
 fn recommend_next_step(
     project: &ManagedProject,
+    env_groups: &[String],
     missing_env_keys: &[String],
     port_conflicts: &[DoctorPortConflict],
     compose_requirements: &[ComposeRequirement],
@@ -1219,10 +1231,10 @@ fn recommend_next_step(
             .iter()
             .any(|item| item.kind == "env" && !item.ready)
         {
-            let groups = if project.project_profile.required_env_groups.is_empty() {
+            let groups = if env_groups.is_empty() {
                 None
             } else {
-                Some(project.project_profile.required_env_groups.join(", "))
+                Some(env_groups.join(", "))
             };
             return Some(
                 match groups {
@@ -2221,6 +2233,7 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                 status,
                 ready_detail: local_service_ready_detail(&normalized),
                 hint: known_local_service_hint(&normalized).map(ToString::to_string),
+                setup_command: local_service_setup_command(&normalized).map(ToString::to_string),
                 start_command: local_service_start_command(&normalized).map(ToString::to_string),
                 stop_command: local_service_stop_command(&normalized).map(ToString::to_string),
                 managed: can_manage_local_service(&normalized),
@@ -2250,6 +2263,8 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                     status: status.clone(),
                     ready_detail: local_service_ready_detail(&normalized),
                     hint: known_local_service_hint(&normalized).map(ToString::to_string),
+                    setup_command: local_service_setup_command(&normalized)
+                        .map(ToString::to_string),
                     start_command: local_service_start_command(&normalized)
                         .map(ToString::to_string),
                     stop_command: local_service_stop_command(&normalized)
@@ -2270,6 +2285,7 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                 LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
             );
             entry.ready_detail = local_service_ready_detail(&normalized);
+            entry.setup_command = local_service_setup_command(&normalized).map(ToString::to_string);
             entry.managed = can_manage_local_service(&normalized);
             entry.management_kind = local_service_management_kind(&normalized).map(ToString::to_string);
         }
@@ -2412,10 +2428,20 @@ fn local_service_ready_detail(service_name: &str) -> Option<String> {
     let port = known_local_service_port(&normalized)
         .map(|value| format!("localhost:{value}"))
         .unwrap_or_else(|| "localhost".to_string());
+    let management_kind = local_service_management_kind(&normalized);
+    let setup_command = local_service_setup_command(&normalized);
 
     Some(match status {
-        LocalServiceStatus::Ready => format!("{label} is ready on {port}."),
-        LocalServiceStatus::Stopped => match local_service_management_kind(&normalized) {
+        LocalServiceStatus::Ready => match management_kind {
+            Some("docker") => format!(
+                "{label} is ready on {port} through a PortPilot-managed Docker service."
+            ),
+            Some("native") => format!(
+                "{label} is ready on {port} through the native service on this machine."
+            ),
+            _ => format!("{label} is ready on {port}."),
+        },
+        LocalServiceStatus::Stopped => match management_kind {
             Some("docker") => format!(
                 "{label} is stopped right now, but PortPilot can start the managed Docker service."
             ),
@@ -2430,9 +2456,14 @@ fn local_service_ready_detail(service_name: &str) -> Option<String> {
         LocalServiceStatus::UnmanagedAlreadyRunning => format!(
             "{label} is already running on {port} outside PortPilot. It will be reused without taking ownership."
         ),
-        LocalServiceStatus::Unmanaged => format!(
-            "{label} is not installed or PortPilot cannot manage it automatically on this machine."
-        ),
+        LocalServiceStatus::Unmanaged => match setup_command {
+            Some(command) => format!(
+                "{label} is not installed or not manageable yet on this machine. Run `{command}` first."
+            ),
+            None => format!(
+                "{label} is not installed or PortPilot cannot manage it automatically on this machine."
+            ),
+        },
     })
 }
 
@@ -2607,13 +2638,40 @@ fn docker_service_run_args(service_name: &str) -> Option<Vec<&'static str>> {
 
 fn build_env_group_presets(project: &ManagedProject) -> Vec<EnvGroupPreset> {
     let mut presets = Vec::new();
-    for group in &project.project_profile.required_env_groups {
-        let preset = build_env_group_preset(project, group);
+    for group in available_env_groups(project) {
+        let preset = build_env_group_preset(project, &group);
         if !preset.values.is_empty() || !preset.manual_keys.is_empty() {
             presets.push(preset);
         }
     }
     presets
+}
+
+fn project_specific_env_groups(project: &ManagedProject) -> Vec<String> {
+    let name = project.name.to_ascii_lowercase();
+    if name.contains("flowise") {
+        return vec![
+            "auth".to_string(),
+            "logging".to_string(),
+            "storage".to_string(),
+            "security".to_string(),
+            "metrics".to_string(),
+        ];
+    }
+
+    if name.contains("librechat") {
+        return vec!["app".to_string()];
+    }
+
+    Vec::new()
+}
+
+fn available_env_groups(project: &ManagedProject) -> Vec<String> {
+    let mut groups = project.project_profile.required_env_groups.clone();
+    groups.extend(project_specific_env_groups(project));
+    groups.sort();
+    groups.dedup();
+    groups
 }
 
 fn build_env_group_preset(project: &ManagedProject, group: &str) -> EnvGroupPreset {
@@ -2657,6 +2715,33 @@ fn build_env_group_preset(project: &ManagedProject, group: &str) -> EnvGroupPres
             "queue" => upper.contains("REDIS") || upper.contains("QUEUE"),
             "workspace" => upper.contains("WORKSPACE") || upper.contains("CONFIG_DIR"),
             "gateway" => upper.contains("GATEWAY") || upper.contains("WEBCHAT"),
+            "logging" => upper == "DEBUG" || upper.starts_with("LOG_"),
+            "storage" => {
+                upper.contains("STORAGE")
+                    || upper.contains("BLOB")
+                    || upper.starts_with("S3_")
+                    || upper.starts_with("GOOGLE_CLOUD_")
+                    || upper.starts_with("AZURE_BLOB_")
+            }
+            "security" => {
+                upper.contains("SECURITY")
+                    || upper == "TRUST_PROXY"
+                    || upper.contains("UNAUTHORIZED")
+                    || upper.contains("PATH_TRAVERSAL")
+                    || upper.contains("HTTP_DENY_LIST")
+                    || upper.contains("CUSTOM_MCP")
+            }
+            "metrics" => upper.starts_with("METRICS_") || upper.starts_with("POSTHOG_"),
+            "auth" => {
+                upper.starts_with("JWT_")
+                    || upper.contains("SESSION_SECRET")
+                    || upper.contains("PASSWORD_")
+                    || upper.contains("TOKEN_")
+                    || upper == "SECURE_COOKIES"
+                    || upper.starts_with("SMTP_")
+                    || upper == "SENDER_EMAIL"
+                    || upper == "APP_URL"
+            }
             "credentials" | "model-providers" | "llm-provider" | "models" => {
                 upper.contains("API_KEY")
                     || upper.contains("TOKEN")
@@ -2930,6 +3015,96 @@ fn suggested_env_value(
             "QUEUE_NAME" => Some(format!("{project_slug}-jobs")),
             _ => None,
         },
+        "logging" => match upper.as_str() {
+            "DEBUG" => Some("false".to_string()),
+            "LOG_LEVEL" => Some("info".to_string()),
+            "LOG_PATH" => Some(
+                project_root
+                    .join(".portpilot")
+                    .join(format!("{project_slug}.log"))
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            "LOG_SANITIZE_BODY_FIELDS" | "LOG_SANITIZE_HEADER_FIELDS" => {
+                Some("authorization,password,token".to_string())
+            }
+            _ => None,
+        },
+        "storage" => match upper.as_str() {
+            "STORAGE_TYPE" | "SECRETKEY_STORAGE_TYPE" => Some("local".to_string()),
+            "BLOB_STORAGE_PATH" => Some(
+                project_root
+                    .join(".portpilot")
+                    .join(format!("{project_slug}-blob"))
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            "SECRETKEY_PATH" => Some(
+                project_root
+                    .join(".portpilot")
+                    .join(format!("{project_slug}-secret.key"))
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            "FLOWISE_SECRETKEY_OVERWRITE" => Some(format!("{project_slug}-dev-secret")),
+            "S3_STORAGE_BUCKET_NAME"
+            | "S3_STORAGE_ACCESS_KEY_ID"
+            | "S3_STORAGE_SECRET_ACCESS_KEY"
+            | "S3_STORAGE_REGION"
+            | "S3_ENDPOINT_URL"
+            | "GOOGLE_CLOUD_STORAGE_CREDENTIAL"
+            | "GOOGLE_CLOUD_STORAGE_PROJ_ID"
+            | "GOOGLE_CLOUD_STORAGE_BUCKET_NAME"
+            | "AZURE_BLOB_STORAGE_CONNECTION_STRING"
+            | "AZURE_BLOB_STORAGE_ACCOUNT_NAME"
+            | "AZURE_BLOB_STORAGE_ACCOUNT_KEY"
+            | "AZURE_BLOB_STORAGE_CONTAINER_NAME"
+            | "SECRETKEY_AWS_ACCESS_KEY"
+            | "SECRETKEY_AWS_SECRET_KEY"
+            | "SECRETKEY_AWS_REGION"
+            | "SECRETKEY_AWS_NAME" => Some("".to_string()),
+            "S3_FORCE_PATH_STYLE" => Some("false".to_string()),
+            "GOOGLE_CLOUD_UNIFORM_BUCKET_ACCESS" => Some("true".to_string()),
+            _ => None,
+        },
+        "security" => match upper.as_str() {
+            "HTTP_SECURITY_CHECK" | "PATH_TRAVERSAL_SAFETY" => Some("true".to_string()),
+            "TRUST_PROXY" | "ALLOW_UNAUTHORIZED_CERTS" => Some("false".to_string()),
+            "CUSTOM_MCP_SECURITY_CHECK" | "CUSTOM_MCP_PROTOCOL" | "HTTP_DENY_LIST" => {
+                Some("".to_string())
+            }
+            _ => None,
+        },
+        "metrics" => match upper.as_str() {
+            "ENABLE_METRICS" | "METRICS_INCLUDE_NODE_METRICS" | "METRICS_OPEN_TELEMETRY_DEBUG" => {
+                Some("false".to_string())
+            }
+            "METRICS_PROVIDER" => Some("console".to_string()),
+            "METRICS_SERVICE_NAME" => Some(format!("{project_slug}-local")),
+            "METRICS_OPEN_TELEMETRY_METRIC_ENDPOINT"
+            | "METRICS_OPEN_TELEMETRY_PROTOCOL"
+            | "POSTHOG_PUBLIC_API_KEY" => Some("".to_string()),
+            _ => None,
+        },
+        "auth" => match upper.as_str() {
+            "APP_URL" => Some(app_url),
+            "JWT_AUTH_TOKEN_SECRET" => Some(format!("{project_slug}-jwt-auth-dev-secret")),
+            "JWT_REFRESH_TOKEN_SECRET" => Some(format!("{project_slug}-jwt-refresh-dev-secret")),
+            "JWT_ISSUER" => Some("portpilot-local".to_string()),
+            "JWT_AUDIENCE" => Some(format!("{project_slug}-local")),
+            "JWT_TOKEN_EXPIRY_IN_MINUTES" => Some("60".to_string()),
+            "JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES" => Some("43200".to_string()),
+            "EXPIRE_AUTH_TOKENS_ON_RESTART" => Some("false".to_string()),
+            "EXPRESS_SESSION_SECRET" => Some(format!("{project_slug}-session-dev-secret")),
+            "PASSWORD_RESET_TOKEN_EXPIRY_IN_MINS" => Some("15".to_string()),
+            "PASSWORD_SALT_HASH_ROUNDS" => Some("10".to_string()),
+            "TOKEN_HASH_SECRET" => Some(format!("{project_slug}-token-hash-dev-secret")),
+            "SECURE_COOKIES" => Some("false".to_string()),
+            "SMTP_PORT" => Some("587".to_string()),
+            "SMTP_SECURE" => Some("false".to_string()),
+            "SMTP_HOST" | "SMTP_USER" | "SMTP_PASSWORD" | "SENDER_EMAIL" => Some("".to_string()),
+            _ => None,
+        },
         "workspace" => match upper.as_str() {
             "OPENCLAW_CONFIG_DIR" => Some(
                 project_root
@@ -2997,6 +3172,11 @@ fn env_group_label(group: &str) -> &'static str {
         "models" => "Models",
         "frontend" => "Frontend",
         "server" => "Server",
+        "logging" => "Logging",
+        "storage" => "Storage",
+        "security" => "Security",
+        "metrics" => "Metrics",
+        "auth" => "Auth",
         _ => "Environment",
     }
 }
@@ -3016,6 +3196,11 @@ fn env_group_description(group: &str) -> &'static str {
         "models" => "Model paths and provider tokens often need manual input.",
         "frontend" => "Preset the local frontend URL and port.",
         "server" => "Preset the local server URL and port.",
+        "logging" => "Local-safe logging defaults that keep noisy output manageable.",
+        "storage" => "Preset local storage and secret-key paths for this stack.",
+        "security" => "Local-safe security defaults that avoid blocking localhost development.",
+        "metrics" => "Disable optional telemetry and preset lightweight local metrics values.",
+        "auth" => "Fill local auth/session defaults while leaving real third-party credentials manual.",
         _ => "Local development defaults for this environment group.",
     }
 }
@@ -3039,6 +3224,23 @@ fn local_service_start_command(service_name: &str) -> Option<&'static str> {
             Some("docker run -d --name chroma -p 8000:8000 chromadb/chroma:latest")
         }
         _ => None,
+    }
+}
+
+fn local_service_setup_command(service_name: &str) -> Option<&'static str> {
+    match service_name.to_ascii_lowercase().as_str() {
+        "ollama" => Some("brew install --cask ollama"),
+        "mongodb" | "meilisearch" | "redis" | "postgres" | "postgresql" | "db" | "qdrant"
+        | "chroma" | "vectordb" => Some("brew install --cask docker"),
+        _ => None,
+    }
+}
+
+fn local_service_action_command(service_name: &str) -> Option<&'static str> {
+    match local_service_status(service_name) {
+        LocalServiceStatus::Unmanaged => local_service_setup_command(service_name)
+            .or_else(|| local_service_start_command(service_name)),
+        _ => local_service_start_command(service_name),
     }
 }
 
@@ -3092,14 +3294,14 @@ fn missing_service_action_hint(project: &ManagedProject) -> Option<String> {
         .iter()
         .find(|service| !service_dependency_ready(service, &services))?;
 
-    if let Some(command) = local_service_start_command(missing) {
+    if let Some(command) = local_service_action_command(missing) {
         if let Some(port) = known_local_service_port(missing) {
             return Some(format!(
-                "Start {missing} first (`{command}` on localhost:{port}), then run the recommended entrypoint."
+                "Start or install {missing} first (`{command}` on localhost:{port}), then run the recommended entrypoint."
             ));
         }
         return Some(format!(
-            "Start {missing} first (`{command}`), then run the recommended entrypoint."
+            "Start or install {missing} first (`{command}`), then run the recommended entrypoint."
         ));
     }
 
@@ -3180,7 +3382,8 @@ mod tests {
     use super::{
         build_compose_requirements, build_env_group_presets, collect_local_service_presets,
         fixed_port_from_command, fixed_port_from_project_config, infer_run_phase,
-        known_local_service_hint, known_local_service_port, local_service_start_command, now_iso,
+        known_local_service_hint, known_local_service_port, local_service_setup_command,
+        local_service_start_command, now_iso,
         parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
     };
     use crate::core::models::{
@@ -3500,6 +3703,12 @@ mod tests {
             },
             env_template: vec![
                 EnvTemplateField {
+                    key: "PORT".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
                     key: "MONGO_URI".to_string(),
                     default_value: None,
                     description: None,
@@ -3530,6 +3739,8 @@ mod tests {
             database.values.get("MONGO_URI").map(String::as_str),
             Some("mongodb://127.0.0.1:27017/librechat")
         );
+        let app = presets.iter().find(|preset| preset.id == "app").unwrap();
+        assert_eq!(app.values.get("PORT").map(String::as_str), Some("3080"));
         let search = presets.iter().find(|preset| preset.id == "search").unwrap();
         assert_eq!(
             search.values.get("MEILI_MASTER_KEY").map(String::as_str),
@@ -3616,6 +3827,30 @@ mod tests {
                     description: None,
                     field_type: EnvFieldType::Text,
                 },
+                EnvTemplateField {
+                    key: "LOG_LEVEL".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "STORAGE_TYPE".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "JWT_ISSUER".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
+                EnvTemplateField {
+                    key: "METRICS_PROVIDER".to_string(),
+                    default_value: None,
+                    description: None,
+                    field_type: EnvFieldType::Text,
+                },
             ],
             env_profile: EnvProfile::default(),
             actions: Vec::new(),
@@ -3658,7 +3893,39 @@ mod tests {
             Some("flowise-queue")
         );
 
+        let logging = presets.iter().find(|preset| preset.id == "logging").unwrap();
+        assert_eq!(
+            logging.values.get("LOG_LEVEL").map(String::as_str),
+            Some("info")
+        );
+
+        let storage = presets.iter().find(|preset| preset.id == "storage").unwrap();
+        assert_eq!(
+            storage.values.get("STORAGE_TYPE").map(String::as_str),
+            Some("local")
+        );
+
+        let auth = presets.iter().find(|preset| preset.id == "auth").unwrap();
+        assert_eq!(
+            auth.values.get("JWT_ISSUER").map(String::as_str),
+            Some("portpilot-local")
+        );
+
+        let metrics = presets.iter().find(|preset| preset.id == "metrics").unwrap();
+        assert_eq!(
+            metrics.values.get("METRICS_PROVIDER").map(String::as_str),
+            Some("console")
+        );
+
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn exposes_setup_command_for_ollama() {
+        assert_eq!(
+            local_service_setup_command("ollama"),
+            Some("brew install --cask ollama")
+        );
     }
 
     #[test]

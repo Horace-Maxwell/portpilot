@@ -527,6 +527,18 @@ export default function App() {
     );
   }
 
+  async function handleCopyServiceSetupCommand(service: LocalServicePreset) {
+    if (!service.setup_command) {
+      return;
+    }
+    await navigator.clipboard.writeText(service.setup_command);
+    setStatusMessage(
+      locale === "zh-CN"
+        ? `已复制 ${service.label} 的安装命令。`
+        : `Copied setup command for ${service.label}.`,
+    );
+  }
+
   async function handleCopyText(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     setStatusMessage(
@@ -1637,6 +1649,17 @@ export default function App() {
                     <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
                     <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
                   </div>
+                  {localHttpsStatus.restart_required && (
+                    <div className="info-banner">
+                      <strong>{t("Restart needed", "需要重启")}</strong>
+                      <p>
+                        {t(
+                          "PortPilot already prepared a trusted certificate, but the active HTTPS listener is still using the older self-signed certificate. Restart PortPilot to switch over.",
+                          "PortPilot 已经准备好了受信任证书，但当前 HTTPS 监听器仍在使用旧的自签名证书。重启 PortPilot 后才会切换过去。",
+                        )}
+                      </p>
+                    </div>
+                  )}
                   <div className="action-row">
                     {localHttpsStatus.certificate_state !== "trusted" && (
                       <button
@@ -1687,6 +1710,9 @@ export default function App() {
                   {service.start_command && (
                     <code className="runtime-node-card__log">{service.start_command}</code>
                   )}
+                  {service.setup_command && service.status === "unmanaged" && (
+                    <code className="runtime-node-card__log">{service.setup_command}</code>
+                  )}
                   {service.stop_command && service.status === "ready" && (
                     <code className="runtime-node-card__log">{service.stop_command}</code>
                   )}
@@ -1725,6 +1751,15 @@ export default function App() {
                         type="button"
                       >
                         {t("Copy Start Command", "复制启动命令")}
+                      </button>
+                    )}
+                    {service.setup_command && service.status === "unmanaged" && (
+                      <button
+                        className="secondary-button"
+                        onClick={() => void handleCopyServiceSetupCommand(service)}
+                        type="button"
+                      >
+                        {t("Copy Setup Command", "复制安装命令")}
                       </button>
                     )}
                   </div>
@@ -2172,6 +2207,8 @@ function localizeBackendMessage(message: string | null | undefined, locale: Loca
     [/PortPilot is serving localhost HTTPS with a trusted mkcert certificate\./g, "PortPilot 当前正在使用受信任的 mkcert 证书提供 localhost HTTPS。"],
     [/PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile\./g, "PortPilot 已用 mkcert 生成 localhost 证书，但当前浏览器环境还需要信任本地 CA。"],
     [/mkcert is installed and a trusted localhost certificate is ready\. Restart PortPilot to swap the active HTTPS listener away from the self-signed fallback\./g, "mkcert 已安装，受信任的 localhost 证书也已准备好。请重启 PortPilot，把当前 HTTPS 监听从自签名证书切换过去。"],
+    [/mkcert is installed, but macOS still needs an interactive trust step\. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS\./g, "mkcert 已安装，但 macOS 仍需要一次交互式信任步骤。请在终端运行 `mkcert -install`，通过系统弹窗后，再回来刷新 PortPilot HTTPS。"],
+    [/PortPilot is still serving HTTPS with the older self-signed certificate\. Restart PortPilot to switch the active HTTPS listener to the trusted mkcert certificate\./g, "PortPilot 当前仍在使用旧的自签名证书提供 HTTPS。请重启 PortPilot，把活动中的 HTTPS 监听切换到受信任的 mkcert 证书。"],
     [/Open the live route or inspect the runtime panel\./g, "打开在线路由或查看运行时面板。"],
     [/Open the live route or inspect recent logs\./g, "打开在线路由或查看最近日志。"],
     [/Fill in the required compose env values before starting this stack\./g, "先补齐 Compose 所需环境变量，再启动这个栈。"],
@@ -2185,15 +2222,21 @@ function localizeBackendMessage(message: string | null | undefined, locale: Loca
     [/Route is reachable and the process looks ready\./g, "路由已可访问，进程看起来已经就绪。"],
     [/Run (.+) to bring this project online\./g, "运行 $1，让这个项目上线。"],
     [/Start (.+) first \(`(.+)` on localhost:(\d+)\), then run the recommended entrypoint\./g, "先启动 $1（在 localhost:$3 上执行 `$2`），再运行推荐入口。"],
+    [/Start or install (.+) first \(`(.+)` on localhost:(\d+)\), then run the recommended entrypoint\./g, "先启动或安装 $1（在 localhost:$3 上执行 `$2`），再运行推荐入口。"],
+    [/Start or install (.+) first \(`(.+)`\), then run the recommended entrypoint\./g, "先启动或安装 $1（执行 `$2`），再运行推荐入口。"],
     [/Free fixed port (\d+) or change the command arguments before starting this project\./g, "请先释放固定端口 $1，或修改命令参数后再启动这个项目。"],
     [/Compose is missing (\d+) required env values?: (.+)\./g, "Compose 缺少 $1 个必需环境变量：$2。"],
     [/Start the required local services? first: (.+)\./g, "请先启动所需的本地服务：$1。"],
+    [/Start or install the required local services? first: (.+)\./g, "请先启动或安装所需的本地服务：$1。"],
     [/is ready on localhost:(\d+)\./g, "已在 localhost:$1 就绪。"],
+    [/is ready on localhost:(\d+) through a PortPilot-managed Docker service\./g, "已通过 PortPilot 受管的 Docker 服务在 localhost:$1 就绪。"],
+    [/is ready on localhost:(\d+) through the native service on this machine\./g, "已通过这台机器上的原生服务在 localhost:$1 就绪。"],
     [/is stopped right now, but PortPilot can start the managed Docker service\./g, "当前已停止，但 PortPilot 可以直接启动受管的 Docker 服务。"],
     [/is stopped right now, but PortPilot can start the native service\./g, "当前已停止，但 PortPilot 可以直接启动本机原生服务。"],
     [/has a managed instance, but it is not healthy or did not bind localhost:(\d+)\./g, "存在一个受管实例，但它还不健康，或没有成功绑定 localhost:$1。"],
     [/is already running on localhost:(\d+) outside PortPilot\. It will be reused without taking ownership\./g, "它已经在 localhost:$1 上由外部实例运行，PortPilot 会直接复用，但不会接管它。"],
     [/is not installed or PortPilot cannot manage it automatically on this machine\./g, "当前机器上还没有安装这个服务，或者 PortPilot 还不能自动管理它。"],
+    [/is not installed or not manageable yet on this machine\. Run `(.+)` first\./g, "当前机器上还没有安装这个服务，或还不能直接管理。请先运行 `$1`。"],
     [/This project hardcodes its port in ([^,]+), so PortPilot cannot move it automatically\./g, "这个项目在 $1 里写死了端口，所以 PortPilot 无法自动改派。"],
     [/This project hardcodes its port, so PortPilot cannot move it automatically\./g, "这个项目写死了端口，所以 PortPilot 无法自动改派。"],
     [/\brunning\b/g, "运行中"],

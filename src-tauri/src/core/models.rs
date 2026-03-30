@@ -421,6 +421,7 @@ pub struct LocalServicePreset {
     pub status: LocalServiceStatus,
     pub ready_detail: Option<String>,
     pub hint: Option<String>,
+    pub setup_command: Option<String>,
     pub start_command: Option<String>,
     pub stop_command: Option<String>,
     pub managed: bool,
@@ -436,6 +437,8 @@ pub struct LocalHttpsStatus {
     pub https_port: Option<u16>,
     pub provider: Option<String>,
     pub certificate_state: LocalHttpsCertificateState,
+    #[serde(default)]
+    pub restart_required: bool,
     pub detail: Option<String>,
 }
 

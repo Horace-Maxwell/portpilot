@@ -88,6 +88,7 @@ async fn start_https_gateway(
                 https_port: None,
                 provider: None,
                 certificate_state: LocalHttpsCertificateState::NeedsInstall,
+                restart_required: false,
                 detail: Some(
                     "PortPilot could not find a free localhost port for the HTTPS gateway."
                         .to_string(),
@@ -105,6 +106,7 @@ async fn start_https_gateway(
                 https_port: None,
                 provider: None,
                 certificate_state: LocalHttpsCertificateState::NeedsInstall,
+                restart_required: false,
                 detail: Some(
                     "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
                         .to_string(),
@@ -118,6 +120,7 @@ async fn start_https_gateway(
                 https_port: None,
                 provider: None,
                 certificate_state: LocalHttpsCertificateState::Error,
+                restart_required: false,
                 detail: Some(error),
             }
         }
@@ -135,6 +138,7 @@ async fn start_https_gateway(
                     https_port: None,
                     provider: Some(assets.provider),
                     certificate_state: LocalHttpsCertificateState::Error,
+                    restart_required: false,
                     detail: Some(format!(
                         "PortPilot generated local HTTPS certificates, but Rustls could not load them: {error}"
                     )),
@@ -156,6 +160,7 @@ async fn start_https_gateway(
         https_port: Some(https_port),
         provider: Some(assets.provider),
         certificate_state: assets.certificate_state,
+        restart_required: false,
         detail: assets.detail,
     }
 }
@@ -190,6 +195,7 @@ pub fn refresh_local_https_status(
             https_port: current.https_port,
             provider: Some(assets.provider),
             certificate_state: assets.certificate_state,
+            restart_required: false,
             detail: assets.detail,
         });
     }
@@ -200,6 +206,7 @@ pub fn refresh_local_https_status(
         https_port: None,
         provider: None,
         certificate_state: LocalHttpsCertificateState::NeedsInstall,
+        restart_required: false,
         detail: Some(
             "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
                 .to_string(),
@@ -228,8 +235,17 @@ pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Resul
         .arg("-install")
         .output()
         .map_err(|error| format!("Failed to run mkcert -install: {error}"))?;
+    let mut trust_detail = None;
     if !installed.status.success() {
-        return Err(String::from_utf8_lossy(&installed.stderr).trim().to_string());
+        let stderr = String::from_utf8_lossy(&installed.stderr).trim().to_string();
+        if is_mkcert_interaction_error(&stderr) {
+            trust_detail = Some(
+                "mkcert is installed, but macOS still needs an interactive trust step. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS."
+                    .to_string(),
+            );
+        } else {
+            return Err(stderr);
+        }
     }
 
     let cert_path = data_dir.join("gateway").join("tls").join("localhost-cert.pem");
@@ -252,8 +268,13 @@ pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Resul
     }
 
     let mut refreshed = refresh_local_https_status(data_dir, current)?;
-    if current.provider.as_deref() == Some("openssl") && current.enabled {
+    if let Some(detail) = trust_detail {
+        refreshed.certificate_state = LocalHttpsCertificateState::NeedsTrust;
+        refreshed.detail = Some(detail);
+        refreshed.restart_required = false;
+    } else if current.provider.as_deref() == Some("openssl") && current.enabled {
         refreshed.certificate_state = LocalHttpsCertificateState::FallbackSelfSigned;
+        refreshed.restart_required = true;
         refreshed.detail = Some(
             "mkcert is installed and a trusted localhost certificate is ready. Restart PortPilot to swap the active HTTPS listener away from the self-signed fallback."
                 .to_string(),
@@ -541,6 +562,7 @@ fn status_for_existing_listener(
                 } else {
                     LocalHttpsCertificateState::NeedsTrust
                 },
+                restart_required: false,
                 detail: Some(if trusted {
                     "PortPilot is serving localhost HTTPS with a trusted mkcert certificate."
                         .to_string()
@@ -550,25 +572,33 @@ fn status_for_existing_listener(
                 }),
             }
         }
-        Some("openssl") => LocalHttpsStatus {
-            enabled: true,
-            http_port,
-            https_port,
-            provider: Some("openssl".to_string()),
-            certificate_state: LocalHttpsCertificateState::FallbackSelfSigned,
-            detail: current_detail.or_else(|| {
-                Some(
-                    "PortPilot is currently serving HTTPS with a self-signed localhost certificate."
-                        .to_string(),
-                )
-            }),
-        },
+        Some("openssl") => {
+            let mkcert_ready = command_exists("mkcert") && mkcert_is_trusted();
+            LocalHttpsStatus {
+                enabled: true,
+                http_port,
+                https_port,
+                provider: Some("openssl".to_string()),
+                certificate_state: LocalHttpsCertificateState::FallbackSelfSigned,
+                restart_required: mkcert_ready,
+                detail: current_detail.or_else(|| {
+                    Some(if mkcert_ready {
+                        "PortPilot is still serving HTTPS with the older self-signed certificate. Restart PortPilot to switch the active HTTPS listener to the trusted mkcert certificate."
+                            .to_string()
+                    } else {
+                        "PortPilot is currently serving HTTPS with a self-signed localhost certificate."
+                            .to_string()
+                    })
+                }),
+            }
+        }
         Some(other) => LocalHttpsStatus {
             enabled: true,
             http_port,
             https_port,
             provider: Some(other.to_string()),
             certificate_state: LocalHttpsCertificateState::Error,
+            restart_required: false,
             detail: Some("PortPilot detected an unknown HTTPS certificate provider.".to_string()),
         },
         None => LocalHttpsStatus {
@@ -577,6 +607,7 @@ fn status_for_existing_listener(
             https_port: None,
             provider: None,
             certificate_state: LocalHttpsCertificateState::NeedsInstall,
+            restart_required: false,
             detail: Some(
                 "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
                     .to_string(),
@@ -624,6 +655,13 @@ fn mkcert_is_trusted() -> bool {
     true
 }
 
+fn is_mkcert_interaction_error(stderr: &str) -> bool {
+    stderr.contains("a password is required")
+        || stderr.contains("a terminal is required")
+        || stderr.contains("no user interaction was possible")
+        || stderr.contains("authorization was denied")
+}
+
 fn command_exists(binary: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
@@ -638,7 +676,9 @@ mod tests {
     use reqwest::Client;
     use uuid::Uuid;
 
-    use super::{build_router, choose_gateway_port_with, GatewayState};
+    use super::{
+        build_router, choose_gateway_port_with, is_mkcert_interaction_error, GatewayState,
+    };
     use crate::storage::store::ProjectStore;
 
     #[test]
@@ -668,5 +708,13 @@ mod tests {
         let start = 42300;
         let port = choose_gateway_port_with(start, |candidate| candidate == start + 2);
         assert_eq!(port, Some(start + 2));
+    }
+
+    #[test]
+    fn detects_mkcert_interaction_failures() {
+        assert!(is_mkcert_interaction_error(
+            "sudo: a password is required\nSecTrustSettingsSetTrustSettings: The authorization was denied since no user interaction was possible."
+        ));
+        assert!(!is_mkcert_interaction_error("mkcert failed for another reason"));
     }
 }
