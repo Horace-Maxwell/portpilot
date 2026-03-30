@@ -1150,8 +1150,13 @@ fn build_runtime_node(
 }
 
 fn runtime_recommended_action(project: &ManagedProject, dependencies_ready: bool) -> Option<String> {
-    if !dependencies_ready && project.has_docker_compose {
-        return Some("Start the required compose services first.".to_string());
+    if !dependencies_ready {
+        if let Some(message) = missing_service_action_hint(project) {
+            return Some(message);
+        }
+        if project.has_docker_compose {
+            return Some("Start the required compose services first.".to_string());
+        }
     }
 
     if matches!(project.status, RuntimeStatus::Running) {
@@ -1170,47 +1175,49 @@ fn runtime_recommended_action(project: &ManagedProject, dependencies_ready: bool
 
 fn dependencies_ready(project: &ManagedProject, services: &[ComposeServiceStatus]) -> bool {
     if !project.has_docker_compose {
-        return true;
+        if project.project_profile.required_services.is_empty() {
+            return true;
+        }
+        return project
+            .project_profile
+            .required_services
+            .iter()
+            .all(|required| known_local_service_port(required).map(port_is_open).unwrap_or(true));
     }
 
     if project.project_profile.required_services.is_empty() {
         return true;
     }
 
-    project.project_profile.required_services.iter().all(|required| {
-        services.iter().any(|service| {
-            service.name == *required
-                && service
-                    .state
-                    .as_deref()
-                    .map(|state| matches!(state, "running" | "healthy"))
-                    .unwrap_or(false)
-        })
-    })
+    project
+        .project_profile
+        .required_services
+        .iter()
+        .all(|required| service_dependency_ready(required, services))
 }
 
 fn build_compose_requirements(
     project: &ManagedProject,
     env_values: &HashMap<String, String>,
 ) -> Vec<ComposeRequirement> {
-    if !project.has_docker_compose {
-        return Vec::new();
-    }
-
     let mut requirements = Vec::new();
-    let services = collect_compose_services(project);
-    let required_services = if project.project_profile.required_services.is_empty() {
+    let services = if project.has_docker_compose {
+        collect_compose_services(project)
+    } else {
+        Vec::new()
+    };
+    let required_services = if !project.project_profile.required_services.is_empty() {
+        project.project_profile.required_services.clone()
+    } else if project.has_docker_compose {
         services.iter().map(|service| service.name.clone()).collect::<Vec<_>>()
     } else {
-        project.project_profile.required_services.clone()
+        Vec::new()
     };
 
     for service_name in required_services {
         let service = services.iter().find(|item| item.name == service_name);
-        let ready = service
-            .and_then(|item| item.state.as_deref())
-            .map(|state| matches!(state, "running" | "healthy"))
-            .unwrap_or(false);
+        let known_local_port = known_local_service_port(&service_name);
+        let ready = service_dependency_ready(&service_name, &services);
         let detail = service.map(|item| {
             let mut details = Vec::new();
             if let Some(state) = &item.state {
@@ -1223,36 +1230,50 @@ fn build_compose_requirements(
                 details.push(format!("ports: {}", item.published_ports.join(", ")));
             }
             details.join(" | ")
+        }).or_else(|| {
+            known_local_port.map(|port| {
+                format!(
+                    "Expected local service on 127.0.0.1:{port}. {}",
+                    known_local_service_hint(&service_name)
+                        .unwrap_or("Start the dependency before launching the main app.")
+                )
+            })
         });
 
         requirements.push(ComposeRequirement {
-            kind: "service".to_string(),
+            kind: if service.is_some() || project.has_docker_compose {
+                "service".to_string()
+            } else {
+                "local-service".to_string()
+            },
             name: service_name,
             ready,
             detail: detail.filter(|value| !value.is_empty()),
         });
     }
 
-    for field in project
-        .env_template
-        .iter()
-        .filter(|field| {
-            field.description
-                .as_deref()
-                .map(|detail| detail.contains("docker-compose"))
-                .unwrap_or(false)
-        })
-    {
-        let ready = env_values
-            .get(&field.key)
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-        requirements.push(ComposeRequirement {
-            kind: "env".to_string(),
-            name: field.key.clone(),
-            ready,
-            detail: Some("Required for docker compose configuration or volume mapping.".to_string()),
-        });
+    if project.has_docker_compose {
+        for field in project
+            .env_template
+            .iter()
+            .filter(|field| {
+                field.description
+                    .as_deref()
+                    .map(|detail| detail.contains("docker-compose"))
+                    .unwrap_or(false)
+            })
+        {
+            let ready = env_values
+                .get(&field.key)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            requirements.push(ComposeRequirement {
+                kind: "env".to_string(),
+                name: field.key.clone(),
+                ready,
+                detail: Some("Required for docker compose configuration or volume mapping.".to_string()),
+            });
+        }
     }
 
     requirements
@@ -1326,6 +1347,25 @@ fn build_doctor_blockers(
                 missing_compose_env.join(", ")
             ),
             fix_label: Some("Fill env values".to_string()),
+            fix_command: None,
+        });
+    }
+
+    let missing_local_services = compose_requirements
+        .iter()
+        .filter(|item| item.kind == "local-service" && !item.ready)
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>();
+    if !missing_local_services.is_empty() {
+        blockers.push(DoctorBlocker {
+            id: "local-services".to_string(),
+            label: "Local Services".to_string(),
+            summary: format!(
+                "Start the required local service{} first: {}.",
+                if missing_local_services.len() == 1 { "" } else { "s" },
+                missing_local_services.join(", ")
+            ),
+            fix_label: Some("Start local services".to_string()),
             fix_command: None,
         });
     }
@@ -1620,6 +1660,74 @@ fn port_is_open(port: u16) -> bool {
     TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
 }
 
+fn known_local_service_port(service_name: &str) -> Option<u16> {
+    match service_name.to_ascii_lowercase().as_str() {
+        "ollama" => Some(11434),
+        "mongodb" => Some(27017),
+        "meilisearch" => Some(7700),
+        "redis" => Some(6379),
+        "postgres" | "postgresql" | "db" => Some(5432),
+        "qdrant" => Some(6333),
+        "weaviate" => Some(8080),
+        "chroma" | "vectordb" => Some(8000),
+        "rag_api" => Some(8000),
+        _ => None,
+    }
+}
+
+fn known_local_service_hint(service_name: &str) -> Option<&'static str> {
+    match service_name.to_ascii_lowercase().as_str() {
+        "ollama" => Some("Ollama is the common local model provider for this stack."),
+        "mongodb" => Some("MongoDB must be available before the app can boot cleanly."),
+        "meilisearch" => Some("Meilisearch is used for local indexing and search."),
+        "redis" => Some("Redis is required for queue, cache, or worker coordination."),
+        "postgres" | "postgresql" | "db" => Some("Postgres is required for the primary app database."),
+        "qdrant" | "weaviate" | "chroma" | "vectordb" => Some("Vector storage should be online before the app is considered ready."),
+        "rag_api" => Some("The RAG sidecar should be available before opening the main route."),
+        _ => None,
+    }
+}
+
+fn service_dependency_ready(service_name: &str, services: &[ComposeServiceStatus]) -> bool {
+    if let Some(service) = services.iter().find(|service| service.name == service_name) {
+        return service
+            .state
+            .as_deref()
+            .map(|state| matches!(state, "running" | "healthy"))
+            .unwrap_or(false);
+    }
+
+    known_local_service_port(service_name)
+        .map(port_is_open)
+        .unwrap_or(true)
+}
+
+fn missing_service_action_hint(project: &ManagedProject) -> Option<String> {
+    let services = if project.has_docker_compose {
+        collect_compose_services(project)
+    } else {
+        Vec::new()
+    };
+
+    let missing = project
+        .project_profile
+        .required_services
+        .iter()
+        .find(|service| !service_dependency_ready(service, &services))?;
+
+    if let Some(port) = known_local_service_port(missing) {
+        return Some(format!(
+            "Start {} on localhost:{port}, then run the recommended entrypoint.",
+            missing
+        ));
+    }
+
+    Some(format!(
+        "Start the required service {} before launching this project.",
+        missing
+    ))
+}
+
 fn fixed_port_from_command(command: &str) -> Option<u16> {
     let patterns = [
         regex::Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
@@ -1644,8 +1752,9 @@ fn fixed_port_from_command(command: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_compose_requirements, fixed_port_from_command, infer_run_phase, now_iso,
-        parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
+        build_compose_requirements, fixed_port_from_command, infer_run_phase, known_local_service_hint,
+        known_local_service_port, now_iso, parse_compose_ps_json,
+        parse_compose_service_names_from_file, project_port_conflicts,
     };
     use crate::core::models::{
         ActionExecution, ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField,
@@ -1839,6 +1948,24 @@ services:
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn maps_common_local_services_to_ports() {
+        assert_eq!(known_local_service_port("ollama"), Some(11434));
+        assert_eq!(known_local_service_port("mongodb"), Some(27017));
+        assert_eq!(known_local_service_port("meilisearch"), Some(7700));
+        assert_eq!(known_local_service_port("redis"), Some(6379));
+        assert_eq!(known_local_service_port("postgres"), Some(5432));
+        assert_eq!(known_local_service_port("unknown-service"), None);
+    }
+
+    #[test]
+    fn returns_hints_for_common_local_services() {
+        assert!(known_local_service_hint("ollama").is_some());
+        assert!(known_local_service_hint("meilisearch").is_some());
+        assert!(known_local_service_hint("redis").is_some());
+        assert!(known_local_service_hint("unknown-service").is_none());
     }
 }
 

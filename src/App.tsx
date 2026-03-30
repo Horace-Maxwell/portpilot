@@ -1763,7 +1763,7 @@ function ComposeRequirements(props: { requirements: ComposeRequirement[] }) {
             <div className="doctor-card__top">
               <strong>{requirement.name}</strong>
               <span className={`status-pill ${requirement.ready ? "status-pill--doctor-ok" : "status-pill--doctor-warn"}`}>
-                {requirement.kind} · {requirement.ready ? "ready" : "missing"}
+                {formatRequirementKind(requirement.kind)} · {requirement.ready ? "ready" : "missing"}
               </span>
             </div>
             {requirement.detail && <p>{requirement.detail}</p>}
@@ -1772,4 +1772,8 @@ function ComposeRequirements(props: { requirements: ComposeRequirement[] }) {
       </div>
     </section>
   );
+}
+
+function formatRequirementKind(kind: ComposeRequirement["kind"]) {
+  return kind.replace(/-/g, " ");
 }
