@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 
 use chrono::Utc;
@@ -289,8 +289,8 @@ impl RuntimeManager {
             children.lock().remove(&execution_id);
             let was_stopped = stopped_ids.lock().remove(&execution_id);
             let status = match exit_status {
-                Ok(status) if was_stopped => ExecutionStatus::Stopped,
-                Ok(status) if status.success() => ExecutionStatus::Success,
+                Ok(_) if was_stopped => ExecutionStatus::Stopped,
+                Ok(s) if s.success() => ExecutionStatus::Success,
                 Ok(_) | Err(_) => ExecutionStatus::Failed,
             };
 
@@ -363,13 +363,18 @@ impl RuntimeManager {
         log_dir: &PathBuf,
         entry: LogEntry,
     ) {
+        const MAX_LOGS_PER_EXECUTION: usize = 5_000;
+
         if let Some(execution) = executions.lock().get_mut(&entry.execution_id) {
             execution.last_log = Some(entry.message.clone());
         }
-        logs.lock()
-            .entry(entry.execution_id.clone())
-            .or_default()
-            .push(entry.clone());
+        let mut logs_guard = logs.lock();
+        let bucket = logs_guard.entry(entry.execution_id.clone()).or_default();
+        if bucket.len() >= MAX_LOGS_PER_EXECUTION {
+            bucket.drain(..MAX_LOGS_PER_EXECUTION / 10);
+        }
+        bucket.push(entry.clone());
+        drop(logs_guard);
 
         let log_file = log_dir.join(format!("{}.log", entry.execution_id));
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file) {
@@ -408,17 +413,36 @@ fn prepare_command(
         return action.command.clone();
     }
 
-    let mut command = action.command.clone();
-    if let Some(port) = assigned_port {
-        if matches!(project.runtime_kind, crate::core::models::RuntimeKind::Node)
-            && action.command.starts_with("npm run dev")
-        {
-            command = format!("{} -- --host 127.0.0.1 --port {}", action.command, port);
-        } else if action.command.starts_with("npm run preview") {
-            command = format!("{} -- --host 127.0.0.1 --port {}", action.command, port);
-        }
+    let Some(port) = assigned_port else {
+        return action.command.clone();
+    };
+
+    if !matches!(project.runtime_kind, crate::core::models::RuntimeKind::Node) {
+        return action.command.clone();
     }
-    command
+
+    // Inject Vite-compatible port flags for dev/preview scripts across all package managers.
+    // Only Vite's CLI accepts `-- --host --port`; Next/Remix/Astro use different flags,
+    // so we gate on the script name rather than the underlying framework.
+    let vite_passthrough_prefixes = [
+        "npm run dev",
+        "npm run preview",
+        "pnpm run dev",
+        "pnpm run preview",
+        "yarn run dev",
+        "yarn run preview",
+        "bun run dev",
+        "bun run preview",
+    ];
+
+    if vite_passthrough_prefixes
+        .iter()
+        .any(|prefix| action.command.starts_with(prefix))
+    {
+        return format!("{} -- --host 127.0.0.1 --port {}", action.command, port);
+    }
+
+    action.command.clone()
 }
 
 fn select_port(preferred_port: u16) -> u16 {
@@ -437,11 +461,14 @@ fn now_iso() -> String {
 }
 
 fn fixed_port_from_command(command: &str) -> Option<u16> {
-    let patterns = [
-        Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
-        Regex::new(r"-p\s+(\d{2,5})").expect("regex"),
-        Regex::new(r"PORT=(\d{2,5})").expect("regex"),
-    ];
+    static PATTERNS: OnceLock<[Regex; 3]> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        [
+            Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
+            Regex::new(r"-p\s+(\d{2,5})").expect("regex"),
+            Regex::new(r"PORT=(\d{2,5})").expect("regex"),
+        ]
+    });
 
     for pattern in patterns {
         if let Some(capture) = pattern.captures(command) {
@@ -455,4 +482,133 @@ fn fixed_port_from_command(command: &str) -> Option<u16> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fixed_port_from_command, prepare_command};
+    use crate::core::models::{
+        ActionKind, ActionSource, EnvProfile, ManagedProject, ProjectAction, ProjectKind,
+        ProjectProfile, ProjectProfileKind, RuntimeKind, RuntimeStatus,
+    };
+    use chrono::Utc;
+
+    fn make_node_project() -> ManagedProject {
+        ManagedProject {
+            id: "test".into(),
+            name: "test".into(),
+            slug: "test".into(),
+            root_path: "/tmp/test".into(),
+            git_url: None,
+            project_kind: ProjectKind::Repo,
+            runtime_kind: RuntimeKind::Node,
+            status: RuntimeStatus::Stopped,
+            last_error: None,
+            preferred_port: Some(5173),
+            resolved_port: None,
+            route_subdomain_url: "http://test.localhost:42300".into(),
+            route_path_url: "http://gateway.localhost:42300/p/test/".into(),
+            has_docker_compose: false,
+            has_dockerfile: false,
+            detected_files: vec![],
+            primary_target_id: None,
+            workspace_targets: vec![],
+            readme_hints: vec![],
+            project_profile: ProjectProfile {
+                kind: ProjectProfileKind::WebApp,
+                summary: None,
+                preferred_entrypoint: None,
+                known_ports: vec![],
+                required_services: vec![],
+                required_env_groups: vec![],
+                route_strategy: None,
+            },
+            env_template: vec![],
+            env_profile: EnvProfile::default(),
+            actions: vec![],
+            created_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    fn make_action(id: &str, command: &str) -> ProjectAction {
+        ProjectAction {
+            id: id.into(),
+            label: id.into(),
+            command: command.into(),
+            workdir: "/tmp/test".into(),
+            kind: ActionKind::Run,
+            port_hint: Some(5173),
+            env_profile: None,
+            healthcheck_url: None,
+            source: ActionSource::Inferred,
+        }
+    }
+
+    #[test]
+    fn injects_port_into_npm_run_dev() {
+        let project = make_node_project();
+        let action = make_action("run-dev", "npm run dev");
+        let result = prepare_command(&project, &action, Some(5174));
+        assert_eq!(result, "npm run dev -- --host 127.0.0.1 --port 5174");
+    }
+
+    #[test]
+    fn injects_port_into_pnpm_run_dev() {
+        let project = make_node_project();
+        let action = make_action("run-dev", "pnpm run dev");
+        let result = prepare_command(&project, &action, Some(5174));
+        assert_eq!(result, "pnpm run dev -- --host 127.0.0.1 --port 5174");
+    }
+
+    #[test]
+    fn injects_port_into_bun_run_dev() {
+        let project = make_node_project();
+        let action = make_action("run-dev", "bun run dev");
+        let result = prepare_command(&project, &action, Some(5174));
+        assert_eq!(result, "bun run dev -- --host 127.0.0.1 --port 5174");
+    }
+
+    #[test]
+    fn injects_port_into_yarn_run_preview() {
+        let project = make_node_project();
+        let action = make_action("run-preview", "yarn run preview");
+        let result = prepare_command(&project, &action, Some(4174));
+        assert_eq!(result, "yarn run preview -- --host 127.0.0.1 --port 4174");
+    }
+
+    #[test]
+    fn skips_port_injection_when_port_is_fixed_in_command() {
+        let project = make_node_project();
+        let action = make_action("run-dev", "npm run dev -- --port 3000");
+        let result = prepare_command(&project, &action, Some(5174));
+        // fixed port detected → command returned as-is
+        assert_eq!(result, "npm run dev -- --port 3000");
+    }
+
+    #[test]
+    fn skips_port_injection_for_non_node_runtime() {
+        let mut project = make_node_project();
+        project.runtime_kind = RuntimeKind::Python;
+        let action = make_action("run-python", "python main.py");
+        let result = prepare_command(&project, &action, Some(8000));
+        assert_eq!(result, "python main.py");
+    }
+
+    #[test]
+    fn skips_port_injection_for_non_vite_scripts() {
+        let project = make_node_project();
+        // next dev doesn't accept Vite passthrough flags
+        let action = make_action("run-dev", "npm run start");
+        let result = prepare_command(&project, &action, Some(3000));
+        assert_eq!(result, "npm run start");
+    }
+
+    #[test]
+    fn detects_fixed_port_from_various_flag_styles() {
+        assert_eq!(fixed_port_from_command("node server.js --port 8080"), Some(8080));
+        assert_eq!(fixed_port_from_command("serve -p 4000"), Some(4000));
+        assert_eq!(fixed_port_from_command("PORT=3001 node index.js"), Some(3001));
+        assert_eq!(fixed_port_from_command("node index.js"), None);
+    }
 }

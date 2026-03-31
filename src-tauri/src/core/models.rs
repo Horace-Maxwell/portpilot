@@ -418,6 +418,8 @@ pub struct LocalServicePreset {
     pub label: String,
     pub port: Option<u16>,
     pub ready: bool,
+    #[serde(default)]
+    pub auto_started: bool,
     pub status: LocalServiceStatus,
     pub ready_detail: Option<String>,
     pub hint: Option<String>,

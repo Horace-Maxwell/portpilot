@@ -14,7 +14,11 @@ use crate::core::models::{
     ProjectRecipe, RouteStrategy, RuntimeKind, RuntimeStatus,
 };
 
-pub const DEFAULT_WORKSPACE_ROOT: &str = "/Users/horacedong/Desktop/Github";
+pub fn default_workspace_root() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/".to_string())
+}
 
 pub fn now_iso() -> String {
     Utc::now().to_rfc3339()
@@ -304,6 +308,7 @@ pub fn infer_project_from_path(
 ) -> Option<ManagedProject> {
     let package_json = root.join("package.json");
     let pyproject = root.join("pyproject.toml");
+    let requirements_txt = root.join("requirements.txt");
     let cargo_toml = root.join("Cargo.toml");
     let go_mod = root.join("go.mod");
     let compose_file = find_compose_file(root);
@@ -311,7 +316,7 @@ pub fn infer_project_from_path(
 
     let runtime_kind = if package_json.exists() {
         RuntimeKind::Node
-    } else if pyproject.exists() {
+    } else if pyproject.exists() || requirements_txt.exists() {
         RuntimeKind::Python
     } else if cargo_toml.exists() {
         RuntimeKind::Rust
@@ -339,7 +344,7 @@ pub fn infer_project_from_path(
     };
 
     let mut detected_files = Vec::new();
-    for path in [&package_json, &pyproject, &cargo_toml, &go_mod, &dockerfile] {
+    for path in [&package_json, &pyproject, &requirements_txt, &cargo_toml, &go_mod, &dockerfile] {
         if path.exists() {
             if let Some(name) = path.file_name().and_then(|v| v.to_str()) {
                 detected_files.push(name.to_string());
@@ -375,11 +380,14 @@ pub fn infer_project_from_path(
     }
     let mut workspace_targets = detect_workspace_targets(root);
     let inferred_readme_hints = infer_readme_hints(root);
+    // Priority: explicit recipe > well-known project name > generic file-scan inference.
+    // Builtin ports are intentional product defaults (e.g. lobe-chat=3210, n8n=5678)
+    // and should not be overridden by framework heuristics (e.g. Next.js → 3000).
     let preferred_port = recipe
         .as_ref()
         .and_then(|item| item.preferred_port)
-        .or(inferred_port)
-        .or_else(|| builtin_default_port(&name));
+        .or_else(|| builtin_default_port(&name))
+        .or(inferred_port);
     if let Some(recipe) = &recipe {
         merge_recipe_env_keys(&mut env_template, recipe);
         apply_recipe_targets(&mut workspace_targets, recipe);
@@ -445,13 +453,24 @@ pub fn infer_project_from_path(
 
 fn builtin_default_port(name: &str) -> Option<u16> {
     match name.to_ascii_lowercase().as_str() {
+        // AI chat UIs
         "sillytavern" => Some(8000),
         "open-webui" => Some(8080),
-        "openclaw" => Some(18789),
         "librechat" => Some(3080),
         "anything-llm" => Some(3001),
+        "lobe-chat" | "lobechat" => Some(3210),
+        "chatbot-ui" => Some(3000),
+        // AI workflow builders
         "flowise" => Some(3000),
+        "langflow" => Some(7860),
+        "dify" => Some(3000),
+        "n8n" => Some(5678),
+        "ragflow" => Some(9380),
+        // Image / diffusion
         "comfyui" => Some(8188),
+        "stable-diffusion-webui" | "stable-diffusion-webui-forge" | "invokeai" => Some(7860),
+        // Gateway / infra
+        "openclaw" => Some(18789),
         _ => None,
     }
 }
@@ -1545,6 +1564,7 @@ fn is_manifest_name(name: &str) -> bool {
         name,
         "package.json"
             | "pyproject.toml"
+            | "requirements.txt"
             | "Cargo.toml"
             | "go.mod"
             | "docker-compose.yml"
@@ -2126,15 +2146,19 @@ fn read_make_targets(root: &Path) -> HashSet<String> {
 }
 
 fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
-    let patterns = [
-        Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
-        Regex::new(r"localhost:(\d{2,5})").expect("regex"),
-        Regex::new(r"127\.0\.0\.1:(\d{2,5})").expect("regex"),
-        Regex::new(r"PORT(?:=|\s+)(\d{2,5})").expect("regex"),
-        Regex::new(r"port\s*:\s*(\d{2,5})").expect("regex"),
-        Regex::new(r#""(\d{2,5}):\d{2,5}""#).expect("regex"),
-        Regex::new(r#"(\d{2,5}):\d{2,5}"#).expect("regex"),
-    ];
+    use std::sync::OnceLock;
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        vec![
+            Regex::new(r"--port\s+(\d{2,5})").expect("regex"),
+            Regex::new(r"localhost:(\d{2,5})").expect("regex"),
+            Regex::new(r"127\.0\.0\.1:(\d{2,5})").expect("regex"),
+            Regex::new(r"PORT(?:=|\s+)(\d{2,5})").expect("regex"),
+            Regex::new(r"port\s*:\s*(\d{2,5})").expect("regex"),
+            Regex::new(r#""(\d{2,5}):\d{2,5}""#).expect("regex"),
+            Regex::new(r#"(\d{2,5}):\d{2,5}"#).expect("regex"),
+        ]
+    });
 
     let mut files_to_scan = vec![
         root.join("package.json"),
@@ -2151,14 +2175,14 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
         files_to_scan.push(compose.to_path_buf());
     }
 
-    for file in files_to_scan {
+    for file in &files_to_scan {
         if !file.exists() {
             continue;
         }
-        let Ok(contents) = fs::read_to_string(&file) else {
+        let Ok(contents) = fs::read_to_string(file) else {
             continue;
         };
-        for pattern in &patterns {
+        for pattern in patterns {
             if let Some(capture) = pattern.captures(&contents) {
                 if let Some(port) = capture
                     .get(1)
@@ -2168,11 +2192,29 @@ fn infer_port_hint(root: &Path, compose_file: Option<&Path>) -> Option<u16> {
                 }
             }
         }
-        if file.ends_with("package.json")
-            && contents.contains("\"vite\"")
-            && contents.contains("\"dev\"")
-        {
-            return Some(5173);
+        if file.ends_with("package.json") {
+            // Vite-based apps default to 5173
+            if contents.contains("\"vite\"") && contents.contains("\"dev\"") {
+                return Some(5173);
+            }
+            // Next.js defaults to 3000
+            if (contents.contains("\"next\"") || contents.contains("next dev"))
+                && contents.contains("\"dev\"")
+            {
+                return Some(3000);
+            }
+            // Remix defaults to 3000
+            if contents.contains("\"remix\"") || contents.contains("remix vite:dev") {
+                return Some(3000);
+            }
+            // Astro defaults to 4321
+            if contents.contains("\"astro\"") || contents.contains("astro dev") {
+                return Some(4321);
+            }
+            // Nuxt defaults to 3000
+            if contents.contains("\"nuxt\"") || contents.contains("nuxt dev") {
+                return Some(3000);
+            }
         }
     }
 
@@ -2666,7 +2708,10 @@ open-webui serve
     #[test]
     fn smokes_real_public_repositories_when_local_clones_are_present() {
         let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT").unwrap_or_else(|_| {
-            "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string()
+            format!(
+                "{}/portpilot-selftest/repos",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+            )
         });
         let repo_root = Path::new(&selftest_root);
         if !repo_root.exists() {
@@ -2888,7 +2933,10 @@ open-webui serve
     #[test]
     fn applies_recipe_overrides_for_real_public_repo_when_present() {
         let selftest_root = std::env::var("PORTPILOT_SELFTEST_ROOT").unwrap_or_else(|_| {
-            "/Users/horacedong/Desktop/Github/portpilot-selftest/repos".to_string()
+            format!(
+                "{}/portpilot-selftest/repos",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+            )
         });
         let path = Path::new(&selftest_root).join("vitesse");
         if !path.join(".portpilot.json").exists() {
@@ -2910,5 +2958,318 @@ open-webui serve
             .detected_files
             .iter()
             .any(|item| item == ".portpilot.json"));
+    }
+
+    // ── New project / local-port tests ────────────────────────────────────────
+
+    /// Next.js projects should be detected as Node, default port 3000.
+    #[test]
+    fn infers_nextjs_project_with_port_3000() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "my-next-app",
+              "scripts": {
+                "dev": "next dev",
+                "build": "next build",
+                "start": "next start"
+              },
+              "dependencies": {
+                "next": "^14.0.0",
+                "react": "^18.0.0"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Node);
+        assert_eq!(project.preferred_port, Some(3000));
+        assert!(
+            project.actions.iter().any(|a| a.command == "npm run dev"),
+            "expected npm run dev action"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Astro projects should be detected as Node, default port 4321.
+    #[test]
+    fn infers_astro_project_with_port_4321() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "my-astro-site",
+              "scripts": {
+                "dev": "astro dev",
+                "build": "astro build",
+                "preview": "astro preview"
+              },
+              "dependencies": {
+                "astro": "^4.0.0"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Node);
+        assert_eq!(project.preferred_port, Some(4321));
+        assert!(
+            project.actions.iter().any(|a| a.command == "npm run dev"),
+            "expected npm run dev action"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Remix projects (Vite-based) should be detected as Node, port 3000.
+    #[test]
+    fn infers_remix_project_with_port_3000() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "my-remix-app",
+              "scripts": {
+                "dev": "remix vite:dev",
+                "build": "remix vite:build",
+                "start": "remix-serve ./build/server/index.js"
+              },
+              "dependencies": {
+                "@remix-run/node": "^2.0.0",
+                "@remix-run/react": "^2.0.0"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Node);
+        assert_eq!(project.preferred_port, Some(3000));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Lobe Chat (pnpm, Next.js) should resolve to port 3210 via builtin_default_port.
+    #[test]
+    fn infers_lobe_chat_builtin_port_3210() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("lobe-chat");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "lobe-chat",
+              "packageManager": "pnpm@9.0.0",
+              "scripts": {
+                "dev": "next dev",
+                "build": "next build",
+                "start": "next start"
+              },
+              "dependencies": {
+                "next": "^14.0.0"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        // builtin_default_port("lobe-chat") = 3210 takes precedence over Next.js 3000
+        assert_eq!(project.preferred_port, Some(3210));
+        assert!(
+            project.actions.iter().any(|a| a.command.contains("pnpm")),
+            "expected pnpm commands for lobe-chat"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// n8n automation should resolve to its builtin port 5678.
+    #[test]
+    fn infers_n8n_builtin_port_5678() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("n8n");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "n8n",
+              "scripts": {
+                "dev": "turbo run dev",
+                "start": "node packages/cli/bin/n8n"
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.preferred_port, Some(5678));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A Python project with only requirements.txt should be inferred as Python.
+    #[test]
+    fn detects_python_project_from_requirements_txt_only() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("requirements.txt"),
+            "fastapi>=0.100\nuvicorn[standard]>=0.23\n",
+        )
+        .unwrap();
+        fs::write(root.join("main.py"), "import uvicorn\n").unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Python);
+        assert!(
+            project.detected_files.iter().any(|f| f == "requirements.txt"),
+            "requirements.txt should appear in detected_files"
+        );
+        assert!(
+            project.actions.iter().any(|a| a.command == "python main.py"),
+            "expected python main.py run action"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A FastAPI project with requirements.txt should produce a pip install action.
+    #[test]
+    fn infers_fastapi_install_from_requirements_txt() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("requirements.txt"),
+            "fastapi>=0.100\nuvicorn[standard]>=0.23\nhttpx\n",
+        )
+        .unwrap();
+        fs::write(root.join("main.py"), "from fastapi import FastAPI\n").unwrap();
+
+        let actions = infer_actions(
+            &root,
+            &RuntimeKind::Python,
+            Some(8000),
+            None,
+            "http://gateway.localhost:42300/p/api/",
+            &[],
+        );
+
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.command == "pip install -r requirements.txt"),
+            "expected pip install action for requirements.txt project"
+        );
+        assert!(
+            actions.iter().any(|a| a.command == "python main.py"),
+            "expected python main.py run action"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Langflow port should resolve via builtin_default_port to 7860.
+    #[test]
+    fn infers_langflow_builtin_port_7860() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("langflow");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"langflow\"\nversion = \"1.0.0\"\n\n[project.scripts]\nlangflow = \"langflow.__main__:main\"\n",
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Python);
+        assert_eq!(project.preferred_port, Some(7860));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// stable-diffusion-webui should resolve to port 7860 via builtin_default_port.
+    #[test]
+    fn infers_stable_diffusion_webui_builtin_port_7860() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("stable-diffusion-webui");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("requirements.txt"),
+            "torch\ntorchvision\ngradio\npillow\n",
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.runtime_kind, RuntimeKind::Python);
+        assert_eq!(project.preferred_port, Some(7860));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A full-stack Next.js + FastAPI monorepo should infer two targets.
+    #[test]
+    fn infers_nextjs_fastapi_monorepo_targets() {
+        let root = std::env::temp_dir().join(format!("portpilot-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::create_dir_all(root.join("backend")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "fullstack",
+              "scripts": {
+                "dev": "concurrently \"npm run dev --prefix frontend\" \"uvicorn backend.main:app\""
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("frontend/package.json"),
+            r#"{
+              "name": "frontend",
+              "scripts": {
+                "dev": "next dev",
+                "build": "next build"
+              },
+              "dependencies": { "next": "^14.0.0" }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("backend/requirements.txt"),
+            "fastapi\nuvicorn\n",
+        )
+        .unwrap();
+
+        let targets = detect_workspace_targets(&root);
+        assert!(
+            targets.iter().any(|t| t.relative_path == "frontend"),
+            "expected frontend target"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// ComfyUI port should resolve to 8188 via builtin_default_port.
+    #[test]
+    fn infers_comfyui_builtin_port_8188() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("ComfyUI");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("requirements.txt"),
+            "torch\ntorchvision\nPillow\naiohttp\n",
+        )
+        .unwrap();
+        fs::write(root.join("main.py"), "# ComfyUI entry point\n").unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.preferred_port, Some(8188));
+        assert!(
+            project.actions.iter().any(|a| a.command == "python main.py"),
+            "expected python main.py for ComfyUI"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

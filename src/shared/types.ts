@@ -282,6 +282,7 @@ export interface LocalServicePreset {
   label: string;
   port: number | null;
   ready: boolean;
+  auto_started: boolean;
   status: LocalServiceStatus;
   ready_detail: string | null;
   hint: string | null;

@@ -10,7 +10,7 @@ mod storage {
     pub mod store;
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::core::inference::{
     find_compose_file, infer_project_from_path, now_iso, parse_env_template,
-    repo_name_from_git_url, scan_workspace_roots, slugify, DEFAULT_WORKSPACE_ROOT,
+    default_workspace_root, repo_name_from_git_url, scan_workspace_roots, slugify,
 };
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
@@ -44,6 +44,7 @@ struct AppState {
     runtime: Arc<RuntimeManager>,
     gateway_port: Arc<Mutex<u16>>,
     local_https_status: Arc<Mutex<LocalHttpsStatus>>,
+    auto_started_local_services: Arc<Mutex<HashSet<String>>>,
     data_dir: PathBuf,
 }
 
@@ -51,7 +52,7 @@ struct AppState {
 fn list_workspace_roots(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let roots = state.store.list_workspace_roots()?;
     if roots.is_empty() {
-        return Ok(vec![DEFAULT_WORKSPACE_ROOT.to_string()]);
+        return Ok(vec![default_workspace_root()]);
     }
     Ok(roots)
 }
@@ -62,7 +63,7 @@ fn set_workspace_roots(
     roots: Vec<String>,
 ) -> Result<Vec<String>, String> {
     let normalized = if roots.is_empty() {
-        vec![DEFAULT_WORKSPACE_ROOT.to_string()]
+        vec![default_workspace_root()]
     } else {
         roots
     };
@@ -91,7 +92,7 @@ fn scan_local_projects(
         state
             .store
             .list_workspace_roots()
-            .unwrap_or_else(|_| vec![DEFAULT_WORKSPACE_ROOT.to_string()])
+            .unwrap_or_else(|_| vec![default_workspace_root()])
     });
     Ok(scan_workspace_roots(&roots, *state.gateway_port.lock()))
 }
@@ -137,7 +138,12 @@ fn get_doctor_report(
 ) -> Result<DoctorReport, String> {
     let project = fresh_project(&state.store, &project_id, *state.gateway_port.lock())?;
     let https_status = state.local_https_status.lock().clone();
-    Ok(build_doctor_report(&project, &https_status))
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    Ok(build_doctor_report(
+        &project,
+        &https_status,
+        &auto_started_local_services,
+    ))
 }
 
 #[tauri::command]
@@ -319,7 +325,11 @@ fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, S
 #[tauri::command]
 fn list_local_service_presets(state: State<'_, AppState>) -> Result<Vec<LocalServicePreset>, String> {
     let projects = state.store.list()?;
-    Ok(collect_local_service_presets(&projects))
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    Ok(collect_local_service_presets(
+        &projects,
+        &auto_started_local_services,
+    ))
 }
 
 #[tauri::command]
@@ -328,7 +338,8 @@ fn inspect_local_service(
     service_name: String,
 ) -> Result<LocalServicePreset, String> {
     let projects = state.store.list()?;
-    collect_local_service_presets(&projects)
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    collect_local_service_presets(&projects, &auto_started_local_services)
         .into_iter()
         .find(|preset| preset.name == service_name.to_ascii_lowercase())
         .ok_or_else(|| "Service preset not found".to_string())
@@ -339,9 +350,14 @@ fn start_local_service(
     state: State<'_, AppState>,
     service_name: String,
 ) -> Result<LocalServicePreset, String> {
+    state
+        .auto_started_local_services
+        .lock()
+        .remove(&service_name.to_ascii_lowercase());
     ensure_local_service_running(&service_name)?;
     let projects = state.store.list()?;
-    collect_local_service_presets(&projects)
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    collect_local_service_presets(&projects, &auto_started_local_services)
         .into_iter()
         .find(|preset| preset.name == service_name.to_ascii_lowercase())
         .ok_or_else(|| "Service preset not found after start".to_string())
@@ -360,10 +376,15 @@ fn restart_local_service(
             "{service_name} is already running outside PortPilot, so it cannot be restarted from here."
         ));
     }
+    state
+        .auto_started_local_services
+        .lock()
+        .remove(&service_name.to_ascii_lowercase());
     let _ = ensure_local_service_stopped(&service_name);
     ensure_local_service_running(&service_name)?;
     let projects = state.store.list()?;
-    collect_local_service_presets(&projects)
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    collect_local_service_presets(&projects, &auto_started_local_services)
         .into_iter()
         .find(|preset| preset.name == service_name.to_ascii_lowercase())
         .ok_or_else(|| "Service preset not found after restart".to_string())
@@ -375,8 +396,13 @@ fn stop_local_service(
     service_name: String,
 ) -> Result<LocalServicePreset, String> {
     ensure_local_service_stopped(&service_name)?;
+    state
+        .auto_started_local_services
+        .lock()
+        .remove(&service_name.to_ascii_lowercase());
     let projects = state.store.list()?;
-    collect_local_service_presets(&projects)
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    collect_local_service_presets(&projects, &auto_started_local_services)
         .into_iter()
         .find(|preset| preset.name == service_name.to_ascii_lowercase())
         .ok_or_else(|| "Service preset not found after stop".to_string())
@@ -596,7 +622,10 @@ fn restart_project(
     run_project_action(app, state, project_id, action_id)
 }
 
-fn ensure_project_local_services_ready(project: &ManagedProject) -> Result<(), String> {
+fn ensure_project_local_services_ready(
+    project: &ManagedProject,
+    auto_started_local_services: &Arc<Mutex<HashSet<String>>>,
+) -> Result<(), String> {
     let mut blocking = Vec::new();
     for service_name in &project.project_profile.required_services {
         let normalized = service_name.to_ascii_lowercase();
@@ -607,11 +636,17 @@ fn ensure_project_local_services_ready(project: &ManagedProject) -> Result<(), S
         match local_service_status(&normalized) {
             LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning => {}
             LocalServiceStatus::Stopped if can_manage_local_service(&normalized) => {
-                ensure_local_service_running(&normalized)?
+                ensure_local_service_running(&normalized)?;
+                auto_started_local_services
+                    .lock()
+                    .insert(normalized.clone());
             }
             LocalServiceStatus::Failed if can_manage_local_service(&normalized) => {
                 let _ = ensure_local_service_stopped(&normalized);
-                ensure_local_service_running(&normalized)?
+                ensure_local_service_running(&normalized)?;
+                auto_started_local_services
+                    .lock()
+                    .insert(normalized.clone());
             }
             _ => {
                 blocking.push(normalized);
@@ -642,7 +677,7 @@ fn run_project_with_dependencies(
     action: ProjectAction,
 ) -> Result<ActionExecution, String> {
     if matches!(action.kind, ActionKind::Run) {
-        ensure_project_local_services_ready(&project)?;
+        ensure_project_local_services_ready(&project, &state.auto_started_local_services)?;
     }
 
     state
@@ -685,7 +720,7 @@ fn import_repo_from_git(
     let roots = state.store.list_workspace_roots()?;
     let target_root = workspace_root
         .or_else(|| roots.first().cloned())
-        .unwrap_or_else(|| DEFAULT_WORKSPACE_ROOT.to_string());
+        .unwrap_or_else(|| default_workspace_root());
 
     fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
     let repo_name = repo_name_from_git_url(&url)?;
@@ -1071,7 +1106,11 @@ fn build_project_recipe(project: &ManagedProject) -> ProjectRecipe {
     }
 }
 
-fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus) -> DoctorReport {
+fn build_doctor_report(
+    project: &ManagedProject,
+    https_status: &LocalHttpsStatus,
+    auto_started_local_services: &HashSet<String>,
+) -> DoctorReport {
     let install_action_id = project
         .actions
         .iter()
@@ -1114,7 +1153,8 @@ fn build_doctor_report(project: &ManagedProject, https_status: &LocalHttpsStatus
     let env = env_check(project, &missing_env_keys);
     let install = install_check(project);
     let port_conflicts = project_port_conflicts(project);
-    let compose_requirements = build_compose_requirements(project, &env_values);
+    let compose_requirements =
+        build_compose_requirements(project, &env_values, auto_started_local_services);
     let env_groups = available_env_groups(project);
     let service_requirements = compose_requirements
         .iter()
@@ -1475,6 +1515,7 @@ fn dependencies_ready(project: &ManagedProject, services: &[ComposeServiceStatus
 fn build_compose_requirements(
     project: &ManagedProject,
     env_values: &HashMap<String, String>,
+    auto_started_local_services: &HashSet<String>,
 ) -> Vec<ComposeRequirement> {
     let mut requirements = Vec::new();
     let services = if project.has_docker_compose {
@@ -1497,6 +1538,7 @@ fn build_compose_requirements(
         let service = services.iter().find(|item| item.name == service_name);
         let known_local_port = known_local_service_port(&service_name);
         let ready = service_dependency_ready(&service_name, &services);
+        let auto_started = auto_started_local_services.contains(&service_name.to_ascii_lowercase());
         let detail = service
             .map(|item| {
                 let mut details = Vec::new();
@@ -1508,6 +1550,9 @@ fn build_compose_requirements(
                 }
                 if !item.published_ports.is_empty() {
                     details.push(format!("ports: {}", item.published_ports.join(", ")));
+                }
+                if auto_started {
+                    details.push("started automatically by PortPilot".to_string());
                 }
                 details.join(" | ")
             })
@@ -1529,8 +1574,13 @@ fn build_compose_requirements(
                     let start = local_service_start_command(&service_name)
                         .map(|command| format!(" Suggested start: {command}"))
                         .unwrap_or_default();
+                    let auto_started_note = if auto_started {
+                        " PortPilot auto-started this dependency for the current project flow."
+                    } else {
+                        ""
+                    };
                     format!(
-                        "Expected local service on 127.0.0.1:{port}. {status} {hint}{start}"
+                        "Expected local service on 127.0.0.1:{port}. {status} {hint}{start}{auto_started_note}"
                     )
                 })
             });
@@ -1587,6 +1637,8 @@ fn build_doctor_blockers(
     https_status: &LocalHttpsStatus,
 ) -> Vec<DoctorBlocker> {
     let mut blockers = Vec::new();
+    let https_fix_command = local_https_fix_command(https_status.certificate_state.clone());
+    let https_fix_label = local_https_fix_label(https_status.certificate_state.clone());
 
     if matches!(tooling.status, DoctorStatus::Error) {
         blockers.push(DoctorBlocker {
@@ -1674,10 +1726,15 @@ fn build_doctor_blockers(
         .collect::<Vec<_>>();
     if !missing_local_services.is_empty() {
         let primary_service = missing_local_services.first().cloned().unwrap_or_default();
-        blockers.push(DoctorBlocker {
-            id: "local-services".to_string(),
-            label: "Local Services".to_string(),
-            summary: format!(
+        let primary_status = local_service_status(&primary_service);
+        let fix_label = local_service_fix_label(&primary_service, &primary_status);
+        let fix_command = local_service_fix_command(&primary_service, &primary_status);
+        let summary = match primary_status {
+            LocalServiceStatus::Unmanaged => format!(
+                "{} is required before this project can run, but it still needs to be installed or started manually.",
+                local_service_label(&primary_service)
+            ),
+            LocalServiceStatus::Stopped => format!(
                 "Start the required local service{} first: {}.",
                 if missing_local_services.len() == 1 {
                     ""
@@ -1686,8 +1743,26 @@ fn build_doctor_blockers(
                 },
                 missing_local_services.join(", ")
             ),
-            fix_label: Some("Suggested start".to_string()),
-            fix_command: local_service_start_command(&primary_service).map(ToString::to_string),
+            LocalServiceStatus::Failed => format!(
+                "{} is required, but the managed service is unhealthy right now. Restart it before launching the project.",
+                local_service_label(&primary_service)
+            ),
+            _ => format!(
+                "Start the required local service{} first: {}.",
+                if missing_local_services.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                missing_local_services.join(", ")
+            ),
+        };
+        blockers.push(DoctorBlocker {
+            id: "local-services".to_string(),
+            label: "Local Services".to_string(),
+            summary,
+            fix_label,
+            fix_command,
         });
     }
 
@@ -1697,22 +1772,22 @@ fn build_doctor_blockers(
             id: "localhost-https".to_string(),
             label: "Local HTTPS".to_string(),
             summary: "PortPilot could not find mkcert yet. HTTPS can only fall back to a self-signed certificate until mkcert is installed.".to_string(),
-            fix_label: Some("Install trusted HTTPS".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            fix_label: https_fix_label.clone(),
+            fix_command: https_fix_command.clone(),
         }),
         LocalHttpsCertificateState::NeedsTrust => blockers.push(DoctorBlocker {
             id: "localhost-https".to_string(),
             label: "Local HTTPS".to_string(),
-            summary: "HTTPS is available, but the current localhost certificate still needs browser trust. Install or trust the mkcert CA to make HTTPS the default local route.".to_string(),
-            fix_label: Some("Suggested fix".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            summary: "HTTPS is already using a mkcert localhost certificate, but macOS still needs you to trust the local CA. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS.".to_string(),
+            fix_label: https_fix_label.clone(),
+            fix_command: https_fix_command.clone(),
         }),
         LocalHttpsCertificateState::FallbackSelfSigned => blockers.push(DoctorBlocker {
             id: "localhost-https".to_string(),
             label: "Local HTTPS".to_string(),
             summary: "HTTPS is running with a self-signed localhost certificate. Browsers will warn until mkcert is installed and PortPilot reloads a trusted cert.".to_string(),
-            fix_label: Some("Install trusted HTTPS".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            fix_label: https_fix_label.clone(),
+            fix_command: https_fix_command.clone(),
         }),
         LocalHttpsCertificateState::Error => blockers.push(DoctorBlocker {
             id: "localhost-https".to_string(),
@@ -1730,6 +1805,8 @@ fn build_doctor_blockers(
 }
 
 fn https_check(https_status: &LocalHttpsStatus) -> DoctorCheck {
+    let fix_label = local_https_fix_label(https_status.certificate_state.clone());
+    let fix_command = local_https_fix_command(https_status.certificate_state.clone());
     match https_status.certificate_state {
         LocalHttpsCertificateState::Trusted => DoctorCheck {
             id: "local-https".to_string(),
@@ -1752,8 +1829,8 @@ fn https_check(https_status: &LocalHttpsStatus) -> DoctorCheck {
                 "Install mkcert to move PortPilot from a self-signed fallback to trusted localhost HTTPS."
                     .to_string(),
             ),
-            fix_label: Some("Install trusted HTTPS".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            fix_label,
+            fix_command,
         },
         LocalHttpsCertificateState::NeedsTrust => DoctorCheck {
             id: "local-https".to_string(),
@@ -1762,8 +1839,8 @@ fn https_check(https_status: &LocalHttpsStatus) -> DoctorCheck {
             summary: "Local HTTPS is available with a certificate that still needs trust."
                 .to_string(),
             detail: https_status.detail.clone(),
-            fix_label: Some("Suggested fix".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            fix_label,
+            fix_command,
         },
         LocalHttpsCertificateState::FallbackSelfSigned => DoctorCheck {
             id: "local-https".to_string(),
@@ -1771,8 +1848,8 @@ fn https_check(https_status: &LocalHttpsStatus) -> DoctorCheck {
             status: DoctorStatus::Warn,
             summary: "Local HTTPS is using a self-signed fallback certificate.".to_string(),
             detail: https_status.detail.clone(),
-            fix_label: Some("Install trusted HTTPS".to_string()),
-            fix_command: Some("brew install mkcert nss && mkcert -install".to_string()),
+            fix_label,
+            fix_command,
         },
         LocalHttpsCertificateState::Error => DoctorCheck {
             id: "local-https".to_string(),
@@ -1783,6 +1860,55 @@ fn https_check(https_status: &LocalHttpsStatus) -> DoctorCheck {
             fix_label: Some("Retry setup".to_string()),
             fix_command: None,
         },
+    }
+}
+
+fn local_https_fix_label(state: LocalHttpsCertificateState) -> Option<String> {
+    match state {
+        LocalHttpsCertificateState::NeedsInstall => Some("Install trusted HTTPS".to_string()),
+        LocalHttpsCertificateState::NeedsTrust => Some("Trust mkcert CA".to_string()),
+        LocalHttpsCertificateState::FallbackSelfSigned => Some("Install trusted HTTPS".to_string()),
+        LocalHttpsCertificateState::Trusted | LocalHttpsCertificateState::Error => None,
+    }
+}
+
+fn local_https_fix_command(state: LocalHttpsCertificateState) -> Option<String> {
+    match state {
+        LocalHttpsCertificateState::NeedsInstall | LocalHttpsCertificateState::FallbackSelfSigned => {
+            Some("brew install mkcert nss && mkcert -install".to_string())
+        }
+        LocalHttpsCertificateState::NeedsTrust => Some("mkcert -install".to_string()),
+        LocalHttpsCertificateState::Trusted | LocalHttpsCertificateState::Error => None,
+    }
+}
+
+fn local_service_fix_label(
+    service_name: &str,
+    status: &LocalServiceStatus,
+) -> Option<String> {
+    match status {
+        LocalServiceStatus::Stopped | LocalServiceStatus::Failed => {
+            Some("Suggested start".to_string())
+        }
+        LocalServiceStatus::Unmanaged if local_service_setup_command(service_name).is_some() => {
+            Some("Install service".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn local_service_fix_command(
+    service_name: &str,
+    status: &LocalServiceStatus,
+) -> Option<String> {
+    match status {
+        LocalServiceStatus::Stopped | LocalServiceStatus::Failed => {
+            local_service_start_command(service_name).map(ToString::to_string)
+        }
+        LocalServiceStatus::Unmanaged => {
+            local_service_setup_command(service_name).map(ToString::to_string)
+        }
+        _ => None,
     }
 }
 
@@ -2213,13 +2339,18 @@ fn local_service_label(service_name: &str) -> String {
     }
 }
 
-fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServicePreset> {
+fn collect_local_service_presets(
+    projects: &[ManagedProject],
+    auto_started_local_services: &HashSet<String>,
+) -> Vec<LocalServicePreset> {
     let mut by_service: HashMap<String, LocalServicePreset> = HashMap::new();
 
     for service_name in core_local_services() {
         let normalized = service_name.to_ascii_lowercase();
         let status = local_service_status(&normalized);
         let port = known_local_service_port(&normalized);
+        let auto_started = auto_started_local_services.contains(&normalized)
+            && matches!(status, LocalServiceStatus::Ready);
         by_service.insert(
             normalized.clone(),
             LocalServicePreset {
@@ -2230,8 +2361,9 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                     status,
                     LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
                 ),
+                auto_started,
                 status,
-                ready_detail: local_service_ready_detail(&normalized),
+                ready_detail: local_service_ready_detail(&normalized, auto_started),
                 hint: known_local_service_hint(&normalized).map(ToString::to_string),
                 setup_command: local_service_setup_command(&normalized).map(ToString::to_string),
                 start_command: local_service_start_command(&normalized).map(ToString::to_string),
@@ -2250,6 +2382,8 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                 continue;
             };
             let status = local_service_status(&normalized);
+            let auto_started = auto_started_local_services.contains(&normalized)
+                && matches!(status, LocalServiceStatus::Ready);
 
             let entry = by_service.entry(normalized.clone()).or_insert_with(|| {
                 LocalServicePreset {
@@ -2260,8 +2394,9 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                         status,
                         LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
                     ),
+                    auto_started,
                     status: status.clone(),
-                    ready_detail: local_service_ready_detail(&normalized),
+                    ready_detail: local_service_ready_detail(&normalized, auto_started),
                     hint: known_local_service_hint(&normalized).map(ToString::to_string),
                     setup_command: local_service_setup_command(&normalized)
                         .map(ToString::to_string),
@@ -2284,7 +2419,9 @@ fn collect_local_service_presets(projects: &[ManagedProject]) -> Vec<LocalServic
                 entry.status,
                 LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
             );
-            entry.ready_detail = local_service_ready_detail(&normalized);
+            entry.auto_started = auto_started_local_services.contains(&normalized)
+                && matches!(entry.status, LocalServiceStatus::Ready);
+            entry.ready_detail = local_service_ready_detail(&normalized, entry.auto_started);
             entry.setup_command = local_service_setup_command(&normalized).map(ToString::to_string);
             entry.managed = can_manage_local_service(&normalized);
             entry.management_kind = local_service_management_kind(&normalized).map(ToString::to_string);
@@ -2421,7 +2558,7 @@ fn local_service_status(service_name: &str) -> LocalServiceStatus {
     }
 }
 
-fn local_service_ready_detail(service_name: &str) -> Option<String> {
+fn local_service_ready_detail(service_name: &str, auto_started: bool) -> Option<String> {
     let normalized = service_name.to_ascii_lowercase();
     let status = local_service_status(&normalized);
     let label = local_service_label(&normalized);
@@ -2431,7 +2568,7 @@ fn local_service_ready_detail(service_name: &str) -> Option<String> {
     let management_kind = local_service_management_kind(&normalized);
     let setup_command = local_service_setup_command(&normalized);
 
-    Some(match status {
+    let mut detail = match status {
         LocalServiceStatus::Ready => match management_kind {
             Some("docker") => format!(
                 "{label} is ready on {port} through a PortPilot-managed Docker service."
@@ -2457,14 +2594,25 @@ fn local_service_ready_detail(service_name: &str) -> Option<String> {
             "{label} is already running on {port} outside PortPilot. It will be reused without taking ownership."
         ),
         LocalServiceStatus::Unmanaged => match setup_command {
-            Some(command) => format!(
-                "{label} is not installed or not manageable yet on this machine. Run `{command}` first."
-            ),
+            Some(command) => match normalized.as_str() {
+                "ollama" => format!(
+                    "{label} is not installed yet on this machine. Run `{command}` first, then come back and start `ollama serve` from PortPilot."
+                ),
+                _ => format!(
+                    "{label} is not installed or not manageable yet on this machine. Run `{command}` first."
+                ),
+            },
             None => format!(
                 "{label} is not installed or PortPilot cannot manage it automatically on this machine."
             ),
         },
-    })
+    };
+
+    if auto_started && matches!(status, LocalServiceStatus::Ready) {
+        detail.push_str(" PortPilot auto-started this dependency for the current project flow.");
+    }
+
+    Some(detail)
 }
 
 fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
@@ -2651,6 +2799,7 @@ fn project_specific_env_groups(project: &ManagedProject) -> Vec<String> {
     let name = project.name.to_ascii_lowercase();
     if name.contains("flowise") {
         return vec![
+            "app".to_string(),
             "auth".to_string(),
             "logging".to_string(),
             "storage".to_string(),
@@ -2660,7 +2809,11 @@ fn project_specific_env_groups(project: &ManagedProject) -> Vec<String> {
     }
 
     if name.contains("librechat") {
-        return vec!["app".to_string()];
+        return vec!["app".to_string(), "auth".to_string()];
+    }
+
+    if name.contains("openclaw") {
+        return vec!["auth".to_string()];
     }
 
     Vec::new()
@@ -2819,6 +2972,7 @@ fn suggested_env_value(
             "DATABASE_USER" => return Some("postgres".to_string()),
             "DATABASE_PASSWORD" => return Some("postgres".to_string()),
             "DATABASE_SSL" => return Some("false".to_string()),
+            "DATABASE_REJECT_UNAUTHORIZED" => return Some("false".to_string()),
             "DATABASE_SSL_KEY_BASE64" => return Some("".to_string()),
             "FLOWISE_SECRETKEY_OVERWRITE" => {
                 return Some(format!("{project_slug}-flowise-dev-secret"))
@@ -2866,6 +3020,7 @@ fn suggested_env_value(
             "DISABLE_FLOWISE_TELEMETRY" | "OFFLINE" => return Some("true".to_string()),
             "DISABLED_NODES" | "MODEL_LIST_CONFIG_JSON" => return Some("".to_string()),
             "QUEUE_NAME" => return Some(format!("{project_slug}-queue")),
+            "WORKER_PORT" => return Some("5566".to_string()),
             "QUEUE_REDIS_EVENT_STREAM_MAX_LEN" => return Some("1000".to_string()),
             "WORKER_CONCURRENCY" => return Some("2".to_string()),
             "REMOVE_ON_AGE" => return Some("3600".to_string()),
@@ -2919,6 +3074,15 @@ fn suggested_env_value(
             "METRICS_OPEN_TELEMETRY_METRIC_ENDPOINT"
             | "METRICS_OPEN_TELEMETRY_PROTOCOL" => return Some("".to_string()),
             "METRICS_OPEN_TELEMETRY_DEBUG" => return Some("false".to_string()),
+            "APIKEY_PATH" => {
+                return Some(
+                    project_root
+                        .join(".portpilot")
+                        .join("flowise-api-keys.json")
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            }
             "MODE" => return Some("development".to_string()),
             _ => {}
         }
@@ -2930,11 +3094,16 @@ fn suggested_env_value(
             "HOST" => return Some(localhost.to_string()),
             "UID" => return Some(uid.clone()),
             "GID" => return Some(gid.clone()),
-            "RAG_PORT" => return Some("8001".to_string()),
+            "RAG_PORT" => return Some("8000".to_string()),
+            "RAG_API_URL" | "RAG_URL" => return Some(format!("http://{localhost}:8000")),
             "MEILI_HOST" | "MEILISEARCH_HOST" | "MEILISEARCH_URL" => {
                 return Some(format!("http://{localhost}:7700"))
             }
             "MEILI_MASTER_KEY" => return Some("masterkey".to_string()),
+            "MEILI_NO_ANALYTICS" => return Some("true".to_string()),
+            "SEARCH" => return Some("true".to_string()),
+            "JWT_SECRET" => return Some(format!("{project_slug}-jwt-secret")),
+            "JWT_REFRESH_SECRET" => return Some(format!("{project_slug}-jwt-refresh-secret")),
             _ => {}
         }
     }
@@ -2955,6 +3124,37 @@ fn suggested_env_value(
                 return Some(format!("http://{localhost}:11434"))
             }
             "SERVER_PORT" => return Some(default_port.to_string()),
+            _ => {}
+        }
+    }
+
+    if project_name.contains("openclaw") {
+        match upper.as_str() {
+            "OPENCLAW_GATEWAY_TOKEN" => return Some(format!("{project_slug}-gateway-token")),
+            "OPENCLAW_STATE_DIR" => {
+                return Some(
+                    project_root
+                        .join(".portpilot")
+                        .join("openclaw-state")
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            }
+            "OPENCLAW_CONFIG_PATH" => {
+                return Some(
+                    project_root
+                        .join(".portpilot")
+                        .join("openclaw-config")
+                        .join("openclaw.json")
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            }
+            "OPENCLAW_HOME" => return Some(project_root.to_string_lossy().to_string()),
+            "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS" => return Some("0".to_string()),
+            "OPENCLAW_GATEWAY_BIND" => return Some("local".to_string()),
+            "OPENCLAW_BRIDGE_PORT" => return Some("18790".to_string()),
+            "OPENCLAW_TZ" => return Some("UTC".to_string()),
             _ => {}
         }
     }
@@ -3004,8 +3204,8 @@ fn suggested_env_value(
             _ => None,
         },
         "rag" => match upper.as_str() {
-            "RAG_PORT" => Some("8001".to_string()),
-            "RAG_API_URL" | "RAG_URL" => Some(format!("http://{localhost}:8001")),
+            "RAG_PORT" => Some("8000".to_string()),
+            "RAG_API_URL" | "RAG_URL" => Some(format!("http://{localhost}:8000")),
             _ => None,
         },
         "queue" => match upper.as_str() {
@@ -3382,16 +3582,16 @@ mod tests {
     use super::{
         build_compose_requirements, build_env_group_presets, collect_local_service_presets,
         fixed_port_from_command, fixed_port_from_project_config, infer_run_phase,
-        known_local_service_hint, known_local_service_port, local_service_setup_command,
-        local_service_start_command, now_iso,
+        known_local_service_hint, known_local_service_port, local_https_fix_command,
+        local_service_setup_command, local_service_start_command, now_iso,
         parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
     };
     use crate::core::models::{
         ActionExecution, ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField,
-        ManagedProject, ProjectAction, ProjectKind, ProjectProfile, ProjectProfileKind, RunPhase,
-        RuntimeKind, RuntimeStatus,
+        LocalHttpsCertificateState, ManagedProject, ProjectAction, ProjectKind, ProjectProfile,
+        ProjectProfileKind, RunPhase, RuntimeKind, RuntimeStatus,
     };
-    use std::{collections::HashMap, fs};
+    use std::{collections::{HashMap, HashSet}, fs};
 
     #[test]
     fn parses_compose_ps_json_rows() {
@@ -3747,7 +3947,7 @@ mod tests {
             Some("masterkey")
         );
         let rag = presets.iter().find(|preset| preset.id == "rag").unwrap();
-        assert_eq!(rag.values.get("RAG_PORT").map(String::as_str), Some("8001"));
+        assert_eq!(rag.values.get("RAG_PORT").map(String::as_str), Some("8000"));
     }
 
     #[test]
@@ -3921,6 +4121,21 @@ mod tests {
     }
 
     #[test]
+    fn exposes_trust_only_fix_command_once_mkcert_is_installed() {
+        assert_eq!(
+            local_https_fix_command(LocalHttpsCertificateState::NeedsTrust)
+                .as_deref(),
+            Some("mkcert -install")
+        );
+        assert_eq!(
+            local_https_fix_command(LocalHttpsCertificateState::NeedsInstall)
+                .as_deref(),
+            Some("brew install mkcert nss && mkcert -install")
+        );
+    }
+
+
+    #[test]
     fn exposes_setup_command_for_ollama() {
         assert_eq!(
             local_service_setup_command("ollama"),
@@ -3966,7 +4181,7 @@ mod tests {
             updated_at: now_iso(),
         };
 
-        let presets = collect_local_service_presets(&[project]);
+        let presets = collect_local_service_presets(&[project], &HashSet::new());
         assert!(presets.len() >= 5);
         let ollama = presets.iter().find(|preset| preset.name == "ollama").unwrap();
         assert!(ollama
@@ -4059,7 +4274,7 @@ services:
             updated_at: now_iso(),
         };
 
-        let requirements = build_compose_requirements(&project, &HashMap::new());
+        let requirements = build_compose_requirements(&project, &HashMap::new(), &HashSet::new());
         assert!(requirements
             .iter()
             .any(|item| item.kind == "service" && item.name == "gateway"));
@@ -4134,7 +4349,7 @@ services:
             updated_at: now_iso(),
         };
 
-        let requirements = build_compose_requirements(&project, &HashMap::new());
+        let requirements = build_compose_requirements(&project, &HashMap::new(), &HashSet::new());
         assert!(requirements
             .iter()
             .any(|item| item.kind == "local-service" && item.name == "ollama"));
@@ -4447,7 +4662,7 @@ pub fn run() {
 
             let store = Arc::new(ProjectStore::load(data_dir.join("portpilot.db"))?);
             if store.list_workspace_roots()?.is_empty() {
-                store.replace_workspace_roots(&[DEFAULT_WORKSPACE_ROOT.to_string()])?;
+                store.replace_workspace_roots(&[default_workspace_root()])?;
             }
             store.normalize_stale_runtime_state()?;
             let persisted_executions = store.list_executions()?;
@@ -4467,6 +4682,7 @@ pub fn run() {
                 runtime,
                 gateway_port: Arc::new(Mutex::new(gateway_port)),
                 local_https_status: Arc::new(Mutex::new(local_https_status)),
+                auto_started_local_services: Arc::new(Mutex::new(HashSet::new())),
                 data_dir,
             });
 

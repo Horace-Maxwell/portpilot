@@ -73,8 +73,8 @@ export default function App() {
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
-  const [importUrl, setImportUrl] = useState("https://github.com/calesthio/Crucix.git");
-  const [importRootDraft, setImportRootDraft] = useState("/Users/horacedong/Desktop/Github");
+  const [importUrl, setImportUrl] = useState("");
+  const [importRootDraft, setImportRootDraft] = useState("");
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [statusMessage, setStatusMessage] = useState(
     locale === "zh-CN" ? "PortPilot 正在启动…" : "Booting PortPilot...",
@@ -307,7 +307,7 @@ export default function App() {
       ]);
     setWorkspaceRoots(roots);
     setWorkspaceDraft(roots.join("\n"));
-    setImportRootDraft(roots[0] ?? "/Users/horacedong/Desktop/Github");
+    setImportRootDraft((prev) => prev || roots[0] || "");
     setProjects(nextProjects);
     setExecutions(nextExecutions);
     setLogs(nextLogs);
@@ -608,6 +608,17 @@ export default function App() {
       );
       await refreshRuntimeOnly();
     });
+  }
+
+  async function handleCopyTrustCommand() {
+    await handleCopyText("mkcert -install", locale === "zh-CN" ? "信任命令" : "trust command");
+  }
+
+  async function handleCopySetupCommand(command: string, label: string) {
+    await handleCopyText(
+      command,
+      locale === "zh-CN" ? `${label} 安装命令` : `${label} setup command`,
+    );
   }
 
   async function handleStartRequiredServices() {
@@ -1265,13 +1276,31 @@ export default function App() {
                                     </small>
                                   )}
                                   <div className="action-row">
-                                    {blocker.id === "localhost-https" && (
+                                    {blocker.id === "localhost-https" && localHttpsStatus?.certificate_state !== "needs_trust" && (
                                       <button
                                         className="secondary-button"
                                         onClick={() => void handleInstallTrustedHttps()}
                                         type="button"
                                       >
                                         {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
+                                      </button>
+                                    )}
+                                    {blocker.id === "localhost-https" && localHttpsStatus?.certificate_state === "needs_trust" && (
+                                      <button
+                                        className="secondary-button"
+                                        onClick={() => void handleCopyTrustCommand()}
+                                        type="button"
+                                      >
+                                        {t("Copy Trust Command", "复制信任命令")}
+                                      </button>
+                                    )}
+                                    {blocker.id === "localhost-https" && (
+                                      <button
+                                        className="ghost-button"
+                                        onClick={() => void handleRefreshHttps()}
+                                        type="button"
+                                      >
+                                        {t("Refresh HTTPS", "刷新 HTTPS")}
                                       </button>
                                     )}
                                     {blocker.id === "local-services" && (
@@ -1310,13 +1339,53 @@ export default function App() {
                               <strong>{t("Required Services", "必需服务")}</strong>
                               <p>
                                 {selectedDoctorReport.service_requirements
-                                  .map((item) => `${item.name} (${item.ready ? t("ready", "就绪") : t("missing", "缺失")})`)
+                                  .map((item) => {
+                                    const localService = localServicePresets.find(
+                                      (service) => service.name === item.name.toLowerCase(),
+                                    );
+                                    if (!localService) {
+                                      return `${item.name} (${item.ready ? t("ready", "就绪") : t("missing", "缺失")})`;
+                                    }
+                                    const suffixParts = [formatLocalServiceStatus(localService.status, locale)];
+                                    if (localService.auto_started) {
+                                      suffixParts.push(t("auto-started", "已自动拉起"));
+                                    }
+                                    if (localService.status === "unmanaged_already_running") {
+                                      suffixParts.push(t("reused external instance", "已复用外部实例"));
+                                    }
+                                    return `${localService.label} (${suffixParts.join(" • ")})`;
+                                  })
                                   .join(" • ")}
                               </p>
                               <div className="action-row">
                                 <button className="secondary-button" onClick={() => void handleStartRequiredServices()} type="button">
                                   {t("Start Managed Dependencies", "启动可受管依赖")}
                                 </button>
+                                {selectedDoctorReport.service_requirements.some((item) => {
+                                  const localService = localServicePresets.find(
+                                    (service) => service.name === item.name.toLowerCase(),
+                                  );
+                                  return localService?.status === "unmanaged" && Boolean(localService.setup_command);
+                                }) && (
+                                  <button
+                                    className="ghost-button"
+                                    onClick={() => {
+                                      const service = selectedDoctorReport.service_requirements
+                                        .map((item) =>
+                                          localServicePresets.find(
+                                            (preset) => preset.name === item.name.toLowerCase(),
+                                          ),
+                                        )
+                                        .find((preset) => preset?.status === "unmanaged" && Boolean(preset?.setup_command));
+                                      if (service?.setup_command) {
+                                        void handleCopySetupCommand(service.setup_command, service.label);
+                                      }
+                                    }}
+                                    type="button"
+                                  >
+                                    {t("Copy Install Command", "复制安装命令")}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           )}
@@ -1660,14 +1729,34 @@ export default function App() {
                       </p>
                     </div>
                   )}
+                  {localHttpsStatus.certificate_state === "needs_trust" && (
+                    <div className="info-banner">
+                      <strong>{t("Manual trust step", "需要手动信任")}</strong>
+                      <p>
+                        {t(
+                          "PortPilot is already using mkcert-generated localhost certificates, but macOS still needs you to approve the CA trust step. Run mkcert -install in Terminal, approve the prompt, then refresh HTTPS here.",
+                          "PortPilot 已经在使用 mkcert 生成的 localhost 证书，但 macOS 仍需要你手动完成 CA 信任。请在终端运行 mkcert -install，通过系统授权后，再回来刷新这里的 HTTPS 状态。",
+                        )}
+                      </p>
+                    </div>
+                  )}
                   <div className="action-row">
-                    {localHttpsStatus.certificate_state !== "trusted" && (
+                    {localHttpsStatus.certificate_state !== "trusted" && localHttpsStatus.certificate_state !== "needs_trust" && (
                       <button
                         className="primary-button"
                         onClick={() => void handleInstallTrustedHttps()}
                         type="button"
                       >
                         {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
+                      </button>
+                    )}
+                    {localHttpsStatus.certificate_state === "needs_trust" && (
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleCopyTrustCommand()}
+                        type="button"
+                      >
+                        {t("Copy Trust Command", "复制信任命令")}
                       </button>
                     )}
                     <button
@@ -1700,12 +1789,26 @@ export default function App() {
                         {t("Managed via", "管理方式")}: {service.management_kind === "docker" ? "Docker" : t("Native", "原生")}
                       </span>
                     )}
+                    {service.auto_started && (
+                      <span>{t("Auto-started by PortPilot", "由 PortPilot 自动拉起")}</span>
+                    )}
                   </div>
                   {service.used_by_projects.length > 0 && (
                     <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
                   )}
                   {service.ready_detail && (
                     <p className="runtime-summary__copy">{localizeBackendMessage(service.ready_detail, locale)}</p>
+                  )}
+                  {service.status === "unmanaged_already_running" && (
+                    <div className="info-banner">
+                      <strong>{t("External instance reused", "已复用外部实例")}</strong>
+                      <p>
+                        {t(
+                          "PortPilot found this dependency already running on its default localhost port and will reuse it without taking ownership.",
+                          "PortPilot 检测到这个依赖已经占用了默认 localhost 端口，因此会直接复用它，而不会接管它。",
+                        )}
+                      </p>
+                    </div>
                   )}
                   {service.start_command && (
                     <code className="runtime-node-card__log">{service.start_command}</code>
@@ -2205,10 +2308,15 @@ function localizeBackendMessage(message: string | null | undefined, locale: Loca
     [/PortPilot could not find mkcert yet\. HTTPS can only fall back to a self-signed certificate until mkcert is installed\./g, "PortPilot 还没有找到 mkcert。在安装 mkcert 之前，HTTPS 只能回退到自签名证书。"],
     [/PortPilot is currently serving HTTPS with a self-signed localhost certificate\./g, "PortPilot 当前正在使用自签名 localhost 证书提供 HTTPS。"],
     [/PortPilot is serving localhost HTTPS with a trusted mkcert certificate\./g, "PortPilot 当前正在使用受信任的 mkcert 证书提供 localhost HTTPS。"],
+    [/PortPilot generated a trusted localhost certificate with mkcert\./g, "PortPilot 已用 mkcert 生成受信任的 localhost 证书。"],
     [/PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile\./g, "PortPilot 已用 mkcert 生成 localhost 证书，但当前浏览器环境还需要信任本地 CA。"],
     [/mkcert is installed and a trusted localhost certificate is ready\. Restart PortPilot to swap the active HTTPS listener away from the self-signed fallback\./g, "mkcert 已安装，受信任的 localhost 证书也已准备好。请重启 PortPilot，把当前 HTTPS 监听从自签名证书切换过去。"],
     [/mkcert is installed, but macOS still needs an interactive trust step\. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS\./g, "mkcert 已安装，但 macOS 仍需要一次交互式信任步骤。请在终端运行 `mkcert -install`，通过系统弹窗后，再回来刷新 PortPilot HTTPS。"],
+    [/HTTPS is already using a mkcert localhost certificate, but macOS still needs you to trust the local CA\. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS\./g, "HTTPS 已经在使用 mkcert 的 localhost 证书，但 macOS 仍需要你信任本地 CA。请在终端运行 `mkcert -install`，通过系统授权后，再刷新 PortPilot HTTPS。"],
     [/PortPilot is still serving HTTPS with the older self-signed certificate\. Restart PortPilot to switch the active HTTPS listener to the trusted mkcert certificate\./g, "PortPilot 当前仍在使用旧的自签名证书提供 HTTPS。请重启 PortPilot，把活动中的 HTTPS 监听切换到受信任的 mkcert 证书。"],
+    [/PortPilot auto-started this dependency for the current project flow\./g, "PortPilot 已为当前项目流程自动拉起这个依赖。"],
+    [/is required before this project can run, but it still needs to be installed or started manually\./g, "这个依赖是项目运行前的必需项，但当前仍需要你先安装或手动启动。"],
+    [/is not installed yet on this machine\. Run `(.+)` first, then come back and start `(.+)` from PortPilot\./g, "这台机器上还没有安装该服务。请先运行 `$1`，然后回来通过 PortPilot 启动 `$2`。"],
     [/Open the live route or inspect the runtime panel\./g, "打开在线路由或查看运行时面板。"],
     [/Open the live route or inspect recent logs\./g, "打开在线路由或查看最近日志。"],
     [/Fill in the required compose env values before starting this stack\./g, "先补齐 Compose 所需环境变量，再启动这个栈。"],
@@ -2562,6 +2670,9 @@ function localizeFixLabel(label: string) {
     "Suggested start": "建议启动",
     "Fill env values": "填写环境变量",
     "Free the port": "释放端口",
+    "Install trusted HTTPS": "安装受信任 HTTPS",
+    "Trust mkcert CA": "信任 mkcert CA",
+    "Install service": "安装服务",
   };
   return labels[label] ?? label;
 }
@@ -2581,6 +2692,7 @@ function localizeDoctorLabel(label: string, locale: Locale) {
     "Fixed Port Conflict": "固定端口冲突",
     "Compose Env": "Compose 环境变量",
     "Local Services": "本地服务",
+    "Local HTTPS": "本地 HTTPS",
   };
   return labels[label] ?? label;
 }
