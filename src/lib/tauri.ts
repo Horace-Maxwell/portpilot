@@ -70,6 +70,8 @@ export const api = {
   listLocalServicePresets: () => invoke<LocalServicePreset[]>("list_local_service_presets"),
   inspectLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("inspect_local_service", { serviceName }),
+  installLocalService: (serviceName: string) =>
+    invoke<LocalServicePreset>("install_local_service", { serviceName }),
   startLocalService: (serviceName: string) =>
     invoke<LocalServicePreset>("start_local_service", { serviceName }),
   restartLocalService: (serviceName: string) =>

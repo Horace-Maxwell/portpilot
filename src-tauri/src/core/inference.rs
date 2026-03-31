@@ -344,7 +344,14 @@ pub fn infer_project_from_path(
     };
 
     let mut detected_files = Vec::new();
-    for path in [&package_json, &pyproject, &requirements_txt, &cargo_toml, &go_mod, &dockerfile] {
+    for path in [
+        &package_json,
+        &pyproject,
+        &requirements_txt,
+        &cargo_toml,
+        &go_mod,
+        &dockerfile,
+    ] {
         if path.exists() {
             if let Some(name) = path.file_name().and_then(|v| v.to_str()) {
                 detected_files.push(name.to_string());
@@ -458,6 +465,7 @@ fn builtin_default_port(name: &str) -> Option<u16> {
         "open-webui" => Some(8080),
         "librechat" => Some(3080),
         "anything-llm" => Some(3001),
+        "localai" | "local-ai" => Some(8080),
         "lobe-chat" | "lobechat" => Some(3210),
         "chatbot-ui" => Some(3000),
         // AI workflow builders
@@ -705,6 +713,56 @@ fn builtin_project_profile(
         };
     }
 
+    if lower == "localai" || lower == "local-ai" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| {
+                    action.command.contains("docker run") || action.command.contains("local-ai")
+                })
+                .or_else(|| {
+                    actions
+                        .iter()
+                        .find(|action| matches!(action.kind, ActionKind::Run))
+                })
+                .map(|action| action.id.clone()),
+            required_services: if compose_services.is_empty() {
+                vec!["localai".to_string()]
+            } else {
+                compose_services
+            },
+            required_env_groups: vec!["models".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(8080)],
+            route_strategy: Some(RouteStrategy::LocalhostDirect),
+            summary: Some(
+                "Local OpenAI-compatible model server with a single localhost API surface."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if lower == "lobe-chat" || lower == "lobechat" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("pnpm run dev"))
+                .or_else(|| actions.iter().find(|action| action.command.contains("next dev")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: compose_services,
+            required_env_groups: vec!["model-providers".to_string(), "frontend".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(3210)],
+            route_strategy: Some(if compose_file.is_some() {
+                RouteStrategy::Hybrid
+            } else {
+                RouteStrategy::LocalhostDirect
+            }),
+            summary: Some("Local-first AI chat UI with a primary Next.js route and optional provider credentials.".to_string()),
+        };
+    }
+
     if lower == "flowise" {
         return ProjectProfile {
             kind: ProjectProfileKind::AiUi,
@@ -724,6 +782,47 @@ fn builtin_project_profile(
             known_ports: vec![preferred_port.unwrap_or(3000), 8080],
             route_strategy: Some(RouteStrategy::Hybrid),
             summary: Some("Node-based local AI builder with a primary UI, optional worker queue, and many compose-driven environment requirements.".to_string()),
+        };
+    }
+
+    if lower == "langflow" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::AiUi,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("langflow"))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: compose_services,
+            required_env_groups: vec!["models".to_string(), "database".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(7860)],
+            route_strategy: Some(if compose_file.is_some() {
+                RouteStrategy::Hybrid
+            } else {
+                RouteStrategy::LocalhostDirect
+            }),
+            summary: Some("Local flow builder with a single web route and optional model or database backing services.".to_string()),
+        };
+    }
+
+    if lower == "n8n" {
+        return ProjectProfile {
+            kind: ProjectProfileKind::WebApp,
+            preferred_entrypoint: actions
+                .iter()
+                .find(|action| action.command.contains("compose up"))
+                .or_else(|| actions.iter().find(|action| action.command.contains("n8n")))
+                .or_else(|| actions.iter().find(|action| matches!(action.kind, ActionKind::Run)))
+                .map(|action| action.id.clone()),
+            required_services: compose_services,
+            required_env_groups: vec!["database".to_string(), "queue".to_string(), "auth".to_string()],
+            known_ports: vec![preferred_port.unwrap_or(5678)],
+            route_strategy: Some(if compose_file.is_some() {
+                RouteStrategy::Hybrid
+            } else {
+                RouteStrategy::LocalhostDirect
+            }),
+            summary: Some("Local automation workbench with a primary web UI and optional database or queue backends.".to_string()),
         };
     }
 
@@ -3080,6 +3179,7 @@ open-webui serve
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         // builtin_default_port("lobe-chat") = 3210 takes precedence over Next.js 3000
         assert_eq!(project.preferred_port, Some(3210));
+        assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
         assert!(
             project.actions.iter().any(|a| a.command.contains("pnpm")),
             "expected pnpm commands for lobe-chat"
@@ -3108,6 +3208,7 @@ open-webui serve
 
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         assert_eq!(project.preferred_port, Some(5678));
+        assert_eq!(project.project_profile.kind, ProjectProfileKind::WebApp);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3126,11 +3227,17 @@ open-webui serve
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         assert_eq!(project.runtime_kind, RuntimeKind::Python);
         assert!(
-            project.detected_files.iter().any(|f| f == "requirements.txt"),
+            project
+                .detected_files
+                .iter()
+                .any(|f| f == "requirements.txt"),
             "requirements.txt should appear in detected_files"
         );
         assert!(
-            project.actions.iter().any(|a| a.command == "python main.py"),
+            project
+                .actions
+                .iter()
+                .any(|a| a.command == "python main.py"),
             "expected python main.py run action"
         );
         let _ = fs::remove_dir_all(root);
@@ -3186,6 +3293,26 @@ open-webui serve
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         assert_eq!(project.runtime_kind, RuntimeKind::Python);
         assert_eq!(project.preferred_port, Some(7860));
+        assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// LocalAI should resolve to port 8080 and use an AI UI profile.
+    #[test]
+    fn infers_localai_builtin_port_8080() {
+        let root = std::env::temp_dir()
+            .join(format!("portpilot-test-{}", uuid::Uuid::new_v4()))
+            .join("LocalAI");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  localai:\n    image: localai/localai:latest\n    ports:\n      - '8080:8080'\n",
+        )
+        .unwrap();
+
+        let project = infer_project_from_path(&root, None, 42300).unwrap();
+        assert_eq!(project.preferred_port, Some(8080));
+        assert_eq!(project.project_profile.kind, ProjectProfileKind::AiUi);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3236,11 +3363,7 @@ open-webui serve
             }"#,
         )
         .unwrap();
-        fs::write(
-            root.join("backend/requirements.txt"),
-            "fastapi\nuvicorn\n",
-        )
-        .unwrap();
+        fs::write(root.join("backend/requirements.txt"), "fastapi\nuvicorn\n").unwrap();
 
         let targets = detect_workspace_targets(&root);
         assert!(
@@ -3267,7 +3390,10 @@ open-webui serve
         let project = infer_project_from_path(&root, None, 42300).unwrap();
         assert_eq!(project.preferred_port, Some(8188));
         assert!(
-            project.actions.iter().any(|a| a.command == "python main.py"),
+            project
+                .actions
+                .iter()
+                .any(|a| a.command == "python main.py"),
             "expected python main.py for ComfyUI"
         );
         let _ = fs::remove_dir_all(root);

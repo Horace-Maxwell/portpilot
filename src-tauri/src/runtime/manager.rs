@@ -606,9 +606,15 @@ mod tests {
 
     #[test]
     fn detects_fixed_port_from_various_flag_styles() {
-        assert_eq!(fixed_port_from_command("node server.js --port 8080"), Some(8080));
+        assert_eq!(
+            fixed_port_from_command("node server.js --port 8080"),
+            Some(8080)
+        );
         assert_eq!(fixed_port_from_command("serve -p 4000"), Some(4000));
-        assert_eq!(fixed_port_from_command("PORT=3001 node index.js"), Some(3001));
+        assert_eq!(
+            fixed_port_from_command("PORT=3001 node index.js"),
+            Some(3001)
+        );
         assert_eq!(fixed_port_from_command("node index.js"), None);
     }
 }

@@ -125,6 +125,15 @@ export default function App() {
         ?.local_urls.find((item) => item.recommended)?.url ?? project.route_path_url;
   const preferredRuntimeNodeUrl = (node: RuntimeNode) =>
     node.local_urls.find((item) => item.recommended)?.url ?? node.route_url;
+  const preferredGatewayUrl = (status: LocalHttpsStatus) => {
+    if (
+      status.https_port &&
+      ["trusted", "needs_trust", "fallback_self_signed"].includes(status.certificate_state)
+    ) {
+      return `https://gateway.localhost:${status.https_port}/`;
+    }
+    return `http://gateway.localhost:${status.http_port}/`;
+  };
   const filteredLogs = useMemo(
     () =>
       selectedLogs.filter((entry) => {
@@ -555,6 +564,18 @@ export default function App() {
         locale === "zh-CN"
           ? `${started.label} 已启动或已就绪。`
           : `${started.label} is running or ready.`,
+      );
+      await refreshAll();
+    });
+  }
+
+  async function handleInstallService(service: LocalServicePreset) {
+    await runBusy(`service-install-${service.name}`, async () => {
+      const installed = await api.installLocalService(service.name);
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${installed.label} 的安装流程已执行，请根据最新状态继续。`
+          : `${installed.label} install flow completed. Follow the updated status if more steps are needed.`,
       );
       await refreshAll();
     });
@@ -1368,6 +1389,31 @@ export default function App() {
                                   return localService?.status === "unmanaged" && Boolean(localService.setup_command);
                                 }) && (
                                   <button
+                                    className="secondary-button"
+                                    onClick={() => {
+                                      const service = selectedDoctorReport.service_requirements
+                                        .map((item) =>
+                                          localServicePresets.find(
+                                            (preset) => preset.name === item.name.toLowerCase(),
+                                          ),
+                                        )
+                                        .find((preset) => preset?.status === "unmanaged" && Boolean(preset?.setup_command));
+                                      if (service) {
+                                        void handleInstallService(service);
+                                      }
+                                    }}
+                                    type="button"
+                                  >
+                                    {t("Install Missing Service", "安装缺失服务")}
+                                  </button>
+                                )}
+                                {selectedDoctorReport.service_requirements.some((item) => {
+                                  const localService = localServicePresets.find(
+                                    (service) => service.name === item.name.toLowerCase(),
+                                  );
+                                  return localService?.status === "unmanaged" && Boolean(localService.setup_command);
+                                }) && (
+                                  <button
                                     className="ghost-button"
                                     onClick={() => {
                                       const service = selectedDoctorReport.service_requirements
@@ -1718,6 +1764,9 @@ export default function App() {
                     <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
                     <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
                   </div>
+                  <p className="runtime-summary__copy">
+                    {t("Recommended gateway", "推荐网关")}: {preferredGatewayUrl(localHttpsStatus)}
+                  </p>
                   {localHttpsStatus.restart_required && (
                     <div className="info-banner">
                       <strong>{t("Restart needed", "需要重启")}</strong>
@@ -1759,6 +1808,25 @@ export default function App() {
                         {t("Copy Trust Command", "复制信任命令")}
                       </button>
                     )}
+                    <button
+                      className="secondary-button"
+                      onClick={() => void openUrl(preferredGatewayUrl(localHttpsStatus))}
+                      type="button"
+                    >
+                      {t("Open Gateway", "打开网关")}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        void handleCopyText(
+                          preferredGatewayUrl(localHttpsStatus),
+                          locale === "zh-CN" ? "网关地址" : "gateway URL",
+                        )
+                      }
+                      type="button"
+                    >
+                      {t("Copy Gateway URL", "复制网关地址")}
+                    </button>
                     <button
                       className="secondary-button"
                       onClick={() => void handleRefreshHttps()}
@@ -1820,6 +1888,15 @@ export default function App() {
                     <code className="runtime-node-card__log">{service.stop_command}</code>
                   )}
                   <div className="action-row">
+                    {service.setup_command && service.status === "unmanaged" && (
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleInstallService(service)}
+                        type="button"
+                      >
+                        {t("Install Service", "安装服务")}
+                      </button>
+                    )}
                     {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
                       <button
                         className="primary-button"

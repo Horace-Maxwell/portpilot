@@ -99,20 +99,18 @@ async fn start_https_gateway(
 
     let assets = match prepare_https_assets(&data_dir) {
         Ok(Some(assets)) => assets,
-        Ok(None) => {
-            return LocalHttpsStatus {
-                enabled: false,
-                http_port,
-                https_port: None,
-                provider: None,
-                certificate_state: LocalHttpsCertificateState::NeedsInstall,
-                restart_required: false,
-                detail: Some(
-                    "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
-                        .to_string(),
-                ),
-            }
-        }
+        Ok(None) => return LocalHttpsStatus {
+            enabled: false,
+            http_port,
+            https_port: None,
+            provider: None,
+            certificate_state: LocalHttpsCertificateState::NeedsInstall,
+            restart_required: false,
+            detail: Some(
+                "PortPilot could not find mkcert or openssl, so HTTPS is currently unavailable."
+                    .to_string(),
+            ),
+        },
         Err(error) => {
             return LocalHttpsStatus {
                 enabled: false,
@@ -170,8 +168,14 @@ pub fn refresh_local_https_status(
     current: &LocalHttpsStatus,
 ) -> Result<LocalHttpsStatus, String> {
     let provider = current.provider.as_deref();
-    let cert_path = data_dir.join("gateway").join("tls").join("localhost-cert.pem");
-    let key_path = data_dir.join("gateway").join("tls").join("localhost-key.pem");
+    let cert_path = data_dir
+        .join("gateway")
+        .join("tls")
+        .join("localhost-cert.pem");
+    let key_path = data_dir
+        .join("gateway")
+        .join("tls")
+        .join("localhost-key.pem");
 
     let detail = if current.enabled {
         current.detail.clone()
@@ -214,7 +218,10 @@ pub fn refresh_local_https_status(
     })
 }
 
-pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Result<LocalHttpsStatus, String> {
+pub fn install_local_https(
+    data_dir: &Path,
+    current: &LocalHttpsStatus,
+) -> Result<LocalHttpsStatus, String> {
     if !command_exists("mkcert") {
         if !command_exists("brew") {
             return Err(
@@ -237,7 +244,9 @@ pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Resul
         .map_err(|error| format!("Failed to run mkcert -install: {error}"))?;
     let mut trust_detail = None;
     if !installed.status.success() {
-        let stderr = String::from_utf8_lossy(&installed.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&installed.stderr)
+            .trim()
+            .to_string();
         if is_mkcert_interaction_error(&stderr) {
             trust_detail = Some(
                 "mkcert is installed, but macOS still needs an interactive trust step. Run `mkcert -install` in Terminal, approve the system prompt, then refresh PortPilot HTTPS."
@@ -248,8 +257,14 @@ pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Resul
         }
     }
 
-    let cert_path = data_dir.join("gateway").join("tls").join("localhost-cert.pem");
-    let key_path = data_dir.join("gateway").join("tls").join("localhost-key.pem");
+    let cert_path = data_dir
+        .join("gateway")
+        .join("tls")
+        .join("localhost-cert.pem");
+    let key_path = data_dir
+        .join("gateway")
+        .join("tls")
+        .join("localhost-key.pem");
     let generated = Command::new("mkcert")
         .args([
             "-cert-file",
@@ -264,7 +279,9 @@ pub fn install_local_https(data_dir: &Path, current: &LocalHttpsStatus) -> Resul
         .output()
         .map_err(|error| format!("Failed to regenerate trusted localhost certificates: {error}"))?;
     if !generated.status.success() {
-        return Err(String::from_utf8_lossy(&generated.stderr).trim().to_string());
+        return Err(String::from_utf8_lossy(&generated.stderr)
+            .trim()
+            .to_string());
     }
 
     let mut refreshed = refresh_local_https_status(data_dir, current)?;
@@ -490,15 +507,12 @@ fn prepare_https_assets(data_dir: &Path) -> Result<Option<HttpsAssets>, String> 
                 },
                 cert_path,
                 key_path,
-                detail: Some(
-                    if trusted {
-                        "PortPilot generated a trusted localhost certificate with mkcert."
+                detail: Some(if trusted {
+                    "PortPilot generated a trusted localhost certificate with mkcert.".to_string()
+                } else {
+                    "PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile."
                             .to_string()
-                    } else {
-                        "PortPilot generated a localhost certificate with mkcert, but the local CA still needs to be trusted in this browser profile."
-                            .to_string()
-                    },
-                ),
+                }),
             }));
         }
     }
@@ -715,6 +729,8 @@ mod tests {
         assert!(is_mkcert_interaction_error(
             "sudo: a password is required\nSecTrustSettingsSetTrustSettings: The authorization was denied since no user interaction was possible."
         ));
-        assert!(!is_mkcert_interaction_error("mkcert failed for another reason"));
+        assert!(!is_mkcert_interaction_error(
+            "mkcert failed for another reason"
+        ));
     }
 }

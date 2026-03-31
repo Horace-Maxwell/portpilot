@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::core::inference::{
-    find_compose_file, infer_project_from_path, now_iso, parse_env_template,
-    default_workspace_root, repo_name_from_git_url, scan_workspace_roots, slugify,
+    default_workspace_root, find_compose_file, infer_project_from_path, now_iso,
+    parse_env_template, repo_name_from_git_url, scan_workspace_roots, slugify,
 };
 use crate::core::models::{
     ActionExecution, ActionKind, BatchActionItemResult, BatchActionResult, BatchItemStatus,
@@ -279,7 +279,9 @@ fn list_runtime_nodes(state: State<'_, AppState>) -> Result<Vec<RuntimeNode>, St
 
     Ok(projects
         .into_iter()
-        .map(|project| build_runtime_node(&project, &executions, &logs, &https_status, gateway_port))
+        .map(|project| {
+            build_runtime_node(&project, &executions, &logs, &https_status, gateway_port)
+        })
         .collect())
 }
 
@@ -302,7 +304,10 @@ fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, S
     let install_result = gateway::install_local_https(&state.data_dir, &current)?;
     let mut refreshed = install_result.clone();
     if !current.enabled
-        && !matches!(refreshed.certificate_state, LocalHttpsCertificateState::Error)
+        && !matches!(
+            refreshed.certificate_state,
+            LocalHttpsCertificateState::Error
+        )
     {
         refreshed = tauri::async_runtime::block_on(gateway::start_https_listener(
             Arc::clone(&state.store),
@@ -323,7 +328,9 @@ fn install_local_https(state: State<'_, AppState>) -> Result<LocalHttpsStatus, S
 }
 
 #[tauri::command]
-fn list_local_service_presets(state: State<'_, AppState>) -> Result<Vec<LocalServicePreset>, String> {
+fn list_local_service_presets(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalServicePreset>, String> {
     let projects = state.store.list()?;
     let auto_started_local_services = state.auto_started_local_services.lock().clone();
     Ok(collect_local_service_presets(
@@ -343,6 +350,39 @@ fn inspect_local_service(
         .into_iter()
         .find(|preset| preset.name == service_name.to_ascii_lowercase())
         .ok_or_else(|| "Service preset not found".to_string())
+}
+
+#[tauri::command]
+fn install_local_service(
+    state: State<'_, AppState>,
+    service_name: String,
+) -> Result<LocalServicePreset, String> {
+    let normalized = service_name.to_ascii_lowercase();
+    let command = local_service_setup_command(&normalized).ok_or_else(|| {
+        format!("PortPilot does not have an install preset for {service_name} yet.")
+    })?;
+    let output = Command::new("sh")
+        .args(["-lc", command])
+        .output()
+        .map_err(|error| format!("Failed to install {service_name}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("Install command failed for {service_name}.")
+        });
+    }
+
+    let projects = state.store.list()?;
+    let auto_started_local_services = state.auto_started_local_services.lock().clone();
+    collect_local_service_presets(&projects, &auto_started_local_services)
+        .into_iter()
+        .find(|preset| preset.name == normalized)
+        .ok_or_else(|| "Service preset not found after install".to_string())
 }
 
 #[tauri::command]
@@ -1695,10 +1735,7 @@ fn build_doctor_blockers(
         let group_suffix = if required_env_groups.is_empty() {
             String::new()
         } else {
-            format!(
-                " Related groups: {}.",
-                required_env_groups.join(", ")
-            )
+            format!(" Related groups: {}.", required_env_groups.join(", "))
         };
         blockers.push(DoctorBlocker {
             id: "compose-env".to_string(),
@@ -1874,7 +1911,8 @@ fn local_https_fix_label(state: LocalHttpsCertificateState) -> Option<String> {
 
 fn local_https_fix_command(state: LocalHttpsCertificateState) -> Option<String> {
     match state {
-        LocalHttpsCertificateState::NeedsInstall | LocalHttpsCertificateState::FallbackSelfSigned => {
+        LocalHttpsCertificateState::NeedsInstall
+        | LocalHttpsCertificateState::FallbackSelfSigned => {
             Some("brew install mkcert nss && mkcert -install".to_string())
         }
         LocalHttpsCertificateState::NeedsTrust => Some("mkcert -install".to_string()),
@@ -1882,10 +1920,7 @@ fn local_https_fix_command(state: LocalHttpsCertificateState) -> Option<String> 
     }
 }
 
-fn local_service_fix_label(
-    service_name: &str,
-    status: &LocalServiceStatus,
-) -> Option<String> {
+fn local_service_fix_label(service_name: &str, status: &LocalServiceStatus) -> Option<String> {
     match status {
         LocalServiceStatus::Stopped | LocalServiceStatus::Failed => {
             Some("Suggested start".to_string())
@@ -1897,10 +1932,7 @@ fn local_service_fix_label(
     }
 }
 
-fn local_service_fix_command(
-    service_name: &str,
-    status: &LocalServiceStatus,
-) -> Option<String> {
+fn local_service_fix_command(service_name: &str, status: &LocalServiceStatus) -> Option<String> {
     match status {
         LocalServiceStatus::Stopped | LocalServiceStatus::Failed => {
             local_service_start_command(service_name).map(ToString::to_string)
@@ -2369,7 +2401,8 @@ fn collect_local_service_presets(
                 start_command: local_service_start_command(&normalized).map(ToString::to_string),
                 stop_command: local_service_stop_command(&normalized).map(ToString::to_string),
                 managed: can_manage_local_service(&normalized),
-                management_kind: local_service_management_kind(&normalized).map(ToString::to_string),
+                management_kind: local_service_management_kind(&normalized)
+                    .map(ToString::to_string),
                 used_by_projects: Vec::new(),
             },
         );
@@ -2385,33 +2418,38 @@ fn collect_local_service_presets(
             let auto_started = auto_started_local_services.contains(&normalized)
                 && matches!(status, LocalServiceStatus::Ready);
 
-            let entry = by_service.entry(normalized.clone()).or_insert_with(|| {
-                LocalServicePreset {
-                    name: normalized.clone(),
-                    label: local_service_label(&normalized),
-                    port: Some(port),
-                    ready: matches!(
-                        status,
-                        LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
-                    ),
-                    auto_started,
-                    status: status.clone(),
-                    ready_detail: local_service_ready_detail(&normalized, auto_started),
-                    hint: known_local_service_hint(&normalized).map(ToString::to_string),
-                    setup_command: local_service_setup_command(&normalized)
-                        .map(ToString::to_string),
-                    start_command: local_service_start_command(&normalized)
-                        .map(ToString::to_string),
-                    stop_command: local_service_stop_command(&normalized)
-                        .map(ToString::to_string),
-                    managed: can_manage_local_service(&normalized),
-                    management_kind: local_service_management_kind(&normalized)
-                        .map(ToString::to_string),
-                    used_by_projects: Vec::new(),
-                }
-            });
+            let entry =
+                by_service
+                    .entry(normalized.clone())
+                    .or_insert_with(|| LocalServicePreset {
+                        name: normalized.clone(),
+                        label: local_service_label(&normalized),
+                        port: Some(port),
+                        ready: matches!(
+                            status,
+                            LocalServiceStatus::Ready | LocalServiceStatus::UnmanagedAlreadyRunning
+                        ),
+                        auto_started,
+                        status: status.clone(),
+                        ready_detail: local_service_ready_detail(&normalized, auto_started),
+                        hint: known_local_service_hint(&normalized).map(ToString::to_string),
+                        setup_command: local_service_setup_command(&normalized)
+                            .map(ToString::to_string),
+                        start_command: local_service_start_command(&normalized)
+                            .map(ToString::to_string),
+                        stop_command: local_service_stop_command(&normalized)
+                            .map(ToString::to_string),
+                        managed: can_manage_local_service(&normalized),
+                        management_kind: local_service_management_kind(&normalized)
+                            .map(ToString::to_string),
+                        used_by_projects: Vec::new(),
+                    });
 
-            if !entry.used_by_projects.iter().any(|name| name == &project.name) {
+            if !entry
+                .used_by_projects
+                .iter()
+                .any(|name| name == &project.name)
+            {
                 entry.used_by_projects.push(project.name.clone());
             }
             entry.status = local_service_status(&normalized);
@@ -2424,7 +2462,8 @@ fn collect_local_service_presets(
             entry.ready_detail = local_service_ready_detail(&normalized, entry.auto_started);
             entry.setup_command = local_service_setup_command(&normalized).map(ToString::to_string);
             entry.managed = can_manage_local_service(&normalized);
-            entry.management_kind = local_service_management_kind(&normalized).map(ToString::to_string);
+            entry.management_kind =
+                local_service_management_kind(&normalized).map(ToString::to_string);
         }
     }
 
@@ -2617,7 +2656,9 @@ fn local_service_ready_detail(service_name: &str, auto_started: bool) -> Option<
 
 fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
     let Some(container_name) = docker_service_container_name(service_name) else {
-        return Err(format!("No managed Docker preset found for {service_name}."));
+        return Err(format!(
+            "No managed Docker preset found for {service_name}."
+        ));
     };
 
     let existing = Command::new("docker")
@@ -2658,7 +2699,9 @@ fn ensure_docker_service_running(service_name: &str) -> Result<(), String> {
 
 fn stop_docker_service(service_name: &str) -> Result<(), String> {
     let Some(container_name) = docker_service_container_name(service_name) else {
-        return Err(format!("No managed Docker preset found for {service_name}."));
+        return Err(format!(
+            "No managed Docker preset found for {service_name}."
+        ));
     };
     let stopped = Command::new("docker")
         .args(["rm", "-f", container_name])
@@ -2761,24 +2804,62 @@ fn docker_container_state(container_name: &str) -> Option<String> {
 fn docker_service_run_args(service_name: &str) -> Option<Vec<&'static str>> {
     match service_name {
         "mongodb" => Some(vec![
-            "run", "-d", "--name", "portpilot-mongodb", "-p", "27017:27017", "mongo:7",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-mongodb",
+            "-p",
+            "27017:27017",
+            "mongo:7",
         ]),
         "meilisearch" => Some(vec![
-            "run", "-d", "--name", "portpilot-meilisearch", "-e", "MEILI_NO_ANALYTICS=true",
-            "-p", "7700:7700", "getmeili/meilisearch:v1.12",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-meilisearch",
+            "-e",
+            "MEILI_NO_ANALYTICS=true",
+            "-p",
+            "7700:7700",
+            "getmeili/meilisearch:v1.12",
         ]),
         "redis" => Some(vec![
-            "run", "-d", "--name", "portpilot-redis", "-p", "6379:6379", "redis:7",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-redis",
+            "-p",
+            "6379:6379",
+            "redis:7",
         ]),
         "postgres" | "postgresql" | "db" => Some(vec![
-            "run", "-d", "--name", "portpilot-postgres", "-e", "POSTGRES_PASSWORD=postgres",
-            "-p", "5432:5432", "postgres:16",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-postgres",
+            "-e",
+            "POSTGRES_PASSWORD=postgres",
+            "-p",
+            "5432:5432",
+            "postgres:16",
         ]),
         "qdrant" => Some(vec![
-            "run", "-d", "--name", "portpilot-qdrant", "-p", "6333:6333", "qdrant/qdrant",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-qdrant",
+            "-p",
+            "6333:6333",
+            "qdrant/qdrant",
         ]),
         "chroma" | "vectordb" => Some(vec![
-            "run", "-d", "--name", "portpilot-chroma", "-p", "8000:8000", "chromadb/chroma:latest",
+            "run",
+            "-d",
+            "--name",
+            "portpilot-chroma",
+            "-p",
+            "8000:8000",
+            "chromadb/chroma:latest",
         ]),
         _ => None,
     }
@@ -2911,7 +2992,14 @@ fn build_env_group_preset(project: &ManagedProject, group: &str) -> EnvGroupPres
             continue;
         }
 
-        let suggested = suggested_env_value(project, &group_id, key, default_port, &project_slug, project_root);
+        let suggested = suggested_env_value(
+            project,
+            &group_id,
+            key,
+            default_port,
+            &project_slug,
+            project_root,
+        );
         if let Some(value) = suggested {
             values.insert(field.key.clone(), value);
         } else if !manual_keys.iter().any(|item| item == key) {
@@ -2991,18 +3079,26 @@ fn suggested_env_value(
             "LOG_SANITIZE_BODY_FIELDS" | "LOG_SANITIZE_HEADER_FIELDS" => {
                 return Some("authorization,password,token".to_string())
             }
-            "TOOL_FUNCTION_BUILTIN_DEP" | "ALLOW_BUILTIN_DEP" => {
-                return Some("true".to_string())
-            }
+            "TOOL_FUNCTION_BUILTIN_DEP" | "ALLOW_BUILTIN_DEP" => return Some("true".to_string()),
             "TOOL_FUNCTION_EXTERNAL_DEP" => return Some("false".to_string()),
             "STORAGE_TYPE" => return Some("local".to_string()),
-            "SECRETKEY_AWS_ACCESS_KEY" | "SECRETKEY_AWS_SECRET_KEY" | "SECRETKEY_AWS_REGION"
-            | "SECRETKEY_AWS_NAME" | "S3_STORAGE_BUCKET_NAME" | "S3_STORAGE_ACCESS_KEY_ID"
-            | "S3_STORAGE_SECRET_ACCESS_KEY" | "S3_STORAGE_REGION" | "S3_ENDPOINT_URL"
-            | "S3_FORCE_PATH_STYLE" | "GOOGLE_CLOUD_STORAGE_CREDENTIAL"
-            | "GOOGLE_CLOUD_STORAGE_PROJ_ID" | "GOOGLE_CLOUD_STORAGE_BUCKET_NAME"
-            | "GOOGLE_CLOUD_UNIFORM_BUCKET_ACCESS" | "AZURE_BLOB_STORAGE_CONNECTION_STRING"
-            | "AZURE_BLOB_STORAGE_ACCOUNT_NAME" | "AZURE_BLOB_STORAGE_ACCOUNT_KEY"
+            "SECRETKEY_AWS_ACCESS_KEY"
+            | "SECRETKEY_AWS_SECRET_KEY"
+            | "SECRETKEY_AWS_REGION"
+            | "SECRETKEY_AWS_NAME"
+            | "S3_STORAGE_BUCKET_NAME"
+            | "S3_STORAGE_ACCESS_KEY_ID"
+            | "S3_STORAGE_SECRET_ACCESS_KEY"
+            | "S3_STORAGE_REGION"
+            | "S3_ENDPOINT_URL"
+            | "S3_FORCE_PATH_STYLE"
+            | "GOOGLE_CLOUD_STORAGE_CREDENTIAL"
+            | "GOOGLE_CLOUD_STORAGE_PROJ_ID"
+            | "GOOGLE_CLOUD_STORAGE_BUCKET_NAME"
+            | "GOOGLE_CLOUD_UNIFORM_BUCKET_ACCESS"
+            | "AZURE_BLOB_STORAGE_CONNECTION_STRING"
+            | "AZURE_BLOB_STORAGE_ACCOUNT_NAME"
+            | "AZURE_BLOB_STORAGE_ACCOUNT_KEY"
             | "AZURE_BLOB_STORAGE_CONTAINER_NAME" => return Some("".to_string()),
             "BLOB_STORAGE_PATH" => {
                 return Some(
@@ -3027,8 +3123,9 @@ fn suggested_env_value(
             "REMOVE_ON_COUNT" => return Some("1000".to_string()),
             "REDIS_HOST" => return Some(localhost.to_string()),
             "REDIS_PORT" => return Some("6379".to_string()),
-            "REDIS_USERNAME" | "REDIS_PASSWORD" | "REDIS_CERT" | "REDIS_KEY"
-            | "REDIS_CA" => return Some("".to_string()),
+            "REDIS_USERNAME" | "REDIS_PASSWORD" | "REDIS_CERT" | "REDIS_KEY" | "REDIS_CA" => {
+                return Some("".to_string())
+            }
             "REDIS_TLS" => return Some("false".to_string()),
             "REDIS_KEEP_ALIVE" => return Some("30000".to_string()),
             "ENABLE_BULLMQ_DASHBOARD" => return Some("false".to_string()),
@@ -3037,9 +3134,7 @@ fn suggested_env_value(
             }
             "HTTP_SECURITY_CHECK" | "PATH_TRAVERSAL_SAFETY" => return Some("true".to_string()),
             "TRUST_PROXY" => return Some("false".to_string()),
-            "JWT_AUTH_TOKEN_SECRET" => {
-                return Some(format!("{project_slug}-jwt-auth-dev-secret"))
-            }
+            "JWT_AUTH_TOKEN_SECRET" => return Some(format!("{project_slug}-jwt-auth-dev-secret")),
             "JWT_REFRESH_TOKEN_SECRET" => {
                 return Some(format!("{project_slug}-jwt-refresh-dev-secret"))
             }
@@ -3048,21 +3143,22 @@ fn suggested_env_value(
             "JWT_TOKEN_EXPIRY_IN_MINUTES" => return Some("60".to_string()),
             "JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES" => return Some("43200".to_string()),
             "EXPIRE_AUTH_TOKENS_ON_RESTART" => return Some("false".to_string()),
-            "EXPRESS_SESSION_SECRET" => {
-                return Some(format!("{project_slug}-express-session-dev"))
-            }
+            "EXPRESS_SESSION_SECRET" => return Some(format!("{project_slug}-express-session-dev")),
             "PASSWORD_RESET_TOKEN_EXPIRY_IN_MINS" => return Some("15".to_string()),
             "PASSWORD_SALT_HASH_ROUNDS" => return Some("10".to_string()),
-            "TOKEN_HASH_SECRET" => {
-                return Some(format!("{project_slug}-token-hash-dev-secret"))
-            }
+            "TOKEN_HASH_SECRET" => return Some(format!("{project_slug}-token-hash-dev-secret")),
             "SECURE_COOKIES" => return Some("false".to_string()),
-            "SMTP_HOST" | "SMTP_USER" | "SMTP_PASSWORD" | "SENDER_EMAIL" | "LICENSE_URL"
-            | "FLOWISE_EE_LICENSE_KEY" | "WORKSPACE_INVITE_TEMPLATE_PATH"
-            | "POSTHOG_PUBLIC_API_KEY" | "GLOBAL_AGENT_HTTP_PROXY"
-            | "GLOBAL_AGENT_HTTPS_PROXY" | "GLOBAL_AGENT_NO_PROXY" => {
-                return Some("".to_string())
-            }
+            "SMTP_HOST"
+            | "SMTP_USER"
+            | "SMTP_PASSWORD"
+            | "SENDER_EMAIL"
+            | "LICENSE_URL"
+            | "FLOWISE_EE_LICENSE_KEY"
+            | "WORKSPACE_INVITE_TEMPLATE_PATH"
+            | "POSTHOG_PUBLIC_API_KEY"
+            | "GLOBAL_AGENT_HTTP_PROXY"
+            | "GLOBAL_AGENT_HTTPS_PROXY"
+            | "GLOBAL_AGENT_NO_PROXY" => return Some("".to_string()),
             "SMTP_PORT" => return Some("587".to_string()),
             "SMTP_SECURE" => return Some("false".to_string()),
             "ALLOW_UNAUTHORIZED_CERTS" => return Some("false".to_string()),
@@ -3071,8 +3167,9 @@ fn suggested_env_value(
             "METRICS_PROVIDER" => return Some("console".to_string()),
             "METRICS_INCLUDE_NODE_METRICS" => return Some("false".to_string()),
             "METRICS_SERVICE_NAME" => return Some("flowise-local".to_string()),
-            "METRICS_OPEN_TELEMETRY_METRIC_ENDPOINT"
-            | "METRICS_OPEN_TELEMETRY_PROTOCOL" => return Some("".to_string()),
+            "METRICS_OPEN_TELEMETRY_METRIC_ENDPOINT" | "METRICS_OPEN_TELEMETRY_PROTOCOL" => {
+                return Some("".to_string())
+            }
             "METRICS_OPEN_TELEMETRY_DEBUG" => return Some("false".to_string()),
             "APIKEY_PATH" => {
                 return Some(
@@ -3179,7 +3276,9 @@ fn suggested_env_value(
                 "DATABASE_HOST" | "MONGO_HOST" | "MONGODB_HOST" | "POSTGRES_HOST" => {
                     Some(localhost.to_string())
                 }
-                "DATABASE_PORT" => Some(if uses_mongo(project) { "27017" } else { "5432" }.to_string()),
+                "DATABASE_PORT" => {
+                    Some(if uses_mongo(project) { "27017" } else { "5432" }.to_string())
+                }
                 "DATABASE_NAME" | "POSTGRES_DB" | "MONGO_DB" | "MONGODB_DB" => {
                     Some(project_slug.to_string())
                 }
@@ -3400,7 +3499,9 @@ fn env_group_description(group: &str) -> &'static str {
         "storage" => "Preset local storage and secret-key paths for this stack.",
         "security" => "Local-safe security defaults that avoid blocking localhost development.",
         "metrics" => "Disable optional telemetry and preset lightweight local metrics values.",
-        "auth" => "Fill local auth/session defaults while leaving real third-party credentials manual.",
+        "auth" => {
+            "Fill local auth/session defaults while leaving real third-party credentials manual."
+        }
         _ => "Local development defaults for this environment group.",
     }
 }
@@ -3542,10 +3643,14 @@ fn fixed_port_from_command(command: &str) -> Option<u16> {
 fn fixed_port_from_project_config(project: &ManagedProject) -> Option<String> {
     let preferred_port = project.preferred_port?;
     let root = Path::new(&project.root_path);
-    let candidates = ["config.yaml", "config.yml", "settings.json", "config/config.yaml"];
+    let candidates = [
+        "config.yaml",
+        "config.yml",
+        "settings.json",
+        "config/config.yaml",
+    ];
     let yaml_pattern = regex::Regex::new(r"(?m)^\s*port:\s*(-?\d{1,5})\s*$").expect("regex");
-    let json_pattern =
-        regex::Regex::new(r#""port"\s*:\s*(-?\d{1,5})"#).expect("regex");
+    let json_pattern = regex::Regex::new(r#""port"\s*:\s*(-?\d{1,5})"#).expect("regex");
 
     for relative in candidates {
         let path = root.join(relative);
@@ -3583,15 +3688,18 @@ mod tests {
         build_compose_requirements, build_env_group_presets, collect_local_service_presets,
         fixed_port_from_command, fixed_port_from_project_config, infer_run_phase,
         known_local_service_hint, known_local_service_port, local_https_fix_command,
-        local_service_setup_command, local_service_start_command, now_iso,
-        parse_compose_ps_json, parse_compose_service_names_from_file, project_port_conflicts,
+        local_service_setup_command, local_service_start_command, now_iso, parse_compose_ps_json,
+        parse_compose_service_names_from_file, project_port_conflicts,
     };
     use crate::core::models::{
         ActionExecution, ActionKind, ActionSource, EnvFieldType, EnvProfile, EnvTemplateField,
         LocalHttpsCertificateState, ManagedProject, ProjectAction, ProjectKind, ProjectProfile,
         ProjectProfileKind, RunPhase, RuntimeKind, RuntimeStatus,
     };
-    use std::{collections::{HashMap, HashSet}, fs};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+    };
 
     #[test]
     fn parses_compose_ps_json_rows() {
@@ -3801,7 +3909,8 @@ mod tests {
 
     #[test]
     fn builds_workspace_env_group_preset_for_openclaw() {
-        let root = std::env::temp_dir().join(format!("portpilot-openclaw-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("portpilot-openclaw-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
 
         let project = ManagedProject {
@@ -3828,7 +3937,11 @@ mod tests {
                 kind: ProjectProfileKind::GatewayStack,
                 preferred_entrypoint: None,
                 required_services: vec!["openclaw-gateway".to_string()],
-                required_env_groups: vec!["workspace".to_string(), "gateway".to_string(), "credentials".to_string()],
+                required_env_groups: vec![
+                    "workspace".to_string(),
+                    "gateway".to_string(),
+                    "credentials".to_string(),
+                ],
                 known_ports: vec![18789, 18790],
                 route_strategy: None,
                 summary: None,
@@ -3860,11 +3973,17 @@ mod tests {
         };
 
         let presets = build_env_group_presets(&project);
-        let workspace = presets.iter().find(|preset| preset.id == "workspace").unwrap();
+        let workspace = presets
+            .iter()
+            .find(|preset| preset.id == "workspace")
+            .unwrap();
         assert!(workspace.values.contains_key("OPENCLAW_CONFIG_DIR"));
         assert!(workspace.values.contains_key("OPENCLAW_WORKSPACE_DIR"));
 
-        let credentials = presets.iter().find(|preset| preset.id == "credentials").unwrap();
+        let credentials = presets
+            .iter()
+            .find(|preset| preset.id == "credentials")
+            .unwrap();
         assert_eq!(credentials.manual_keys, vec!["OPENAI_API_KEY".to_string()]);
 
         let _ = fs::remove_dir_all(root);
@@ -3895,8 +4014,16 @@ mod tests {
             project_profile: ProjectProfile {
                 kind: ProjectProfileKind::GatewayStack,
                 preferred_entrypoint: None,
-                required_services: vec!["mongodb".to_string(), "meilisearch".to_string(), "rag_api".to_string()],
-                required_env_groups: vec!["database".to_string(), "search".to_string(), "rag".to_string()],
+                required_services: vec![
+                    "mongodb".to_string(),
+                    "meilisearch".to_string(),
+                    "rag_api".to_string(),
+                ],
+                required_env_groups: vec![
+                    "database".to_string(),
+                    "search".to_string(),
+                    "rag".to_string(),
+                ],
                 known_ports: vec![3080, 8000],
                 route_strategy: None,
                 summary: None,
@@ -3934,7 +4061,10 @@ mod tests {
         };
 
         let presets = build_env_group_presets(&project);
-        let database = presets.iter().find(|preset| preset.id == "database").unwrap();
+        let database = presets
+            .iter()
+            .find(|preset| preset.id == "database")
+            .unwrap();
         assert_eq!(
             database.values.get("MONGO_URI").map(String::as_str),
             Some("mongodb://127.0.0.1:27017/librechat")
@@ -3979,7 +4109,11 @@ mod tests {
                 kind: ProjectProfileKind::AiUi,
                 preferred_entrypoint: None,
                 required_services: vec!["flowise".to_string(), "redis".to_string()],
-                required_env_groups: vec!["app".to_string(), "database".to_string(), "queue".to_string()],
+                required_env_groups: vec![
+                    "app".to_string(),
+                    "database".to_string(),
+                    "queue".to_string(),
+                ],
                 known_ports: vec![3000],
                 route_strategy: None,
                 summary: None,
@@ -4065,7 +4199,10 @@ mod tests {
             Some("http://127.0.0.1:3000")
         );
 
-        let database = presets.iter().find(|preset| preset.id == "database").unwrap();
+        let database = presets
+            .iter()
+            .find(|preset| preset.id == "database")
+            .unwrap();
         assert_eq!(
             database.values.get("DATABASE_HOST").map(String::as_str),
             Some("127.0.0.1")
@@ -4093,13 +4230,19 @@ mod tests {
             Some("flowise-queue")
         );
 
-        let logging = presets.iter().find(|preset| preset.id == "logging").unwrap();
+        let logging = presets
+            .iter()
+            .find(|preset| preset.id == "logging")
+            .unwrap();
         assert_eq!(
             logging.values.get("LOG_LEVEL").map(String::as_str),
             Some("info")
         );
 
-        let storage = presets.iter().find(|preset| preset.id == "storage").unwrap();
+        let storage = presets
+            .iter()
+            .find(|preset| preset.id == "storage")
+            .unwrap();
         assert_eq!(
             storage.values.get("STORAGE_TYPE").map(String::as_str),
             Some("local")
@@ -4111,7 +4254,10 @@ mod tests {
             Some("portpilot-local")
         );
 
-        let metrics = presets.iter().find(|preset| preset.id == "metrics").unwrap();
+        let metrics = presets
+            .iter()
+            .find(|preset| preset.id == "metrics")
+            .unwrap();
         assert_eq!(
             metrics.values.get("METRICS_PROVIDER").map(String::as_str),
             Some("console")
@@ -4123,17 +4269,14 @@ mod tests {
     #[test]
     fn exposes_trust_only_fix_command_once_mkcert_is_installed() {
         assert_eq!(
-            local_https_fix_command(LocalHttpsCertificateState::NeedsTrust)
-                .as_deref(),
+            local_https_fix_command(LocalHttpsCertificateState::NeedsTrust).as_deref(),
             Some("mkcert -install")
         );
         assert_eq!(
-            local_https_fix_command(LocalHttpsCertificateState::NeedsInstall)
-                .as_deref(),
+            local_https_fix_command(LocalHttpsCertificateState::NeedsInstall).as_deref(),
             Some("brew install mkcert nss && mkcert -install")
         );
     }
-
 
     #[test]
     fn exposes_setup_command_for_ollama() {
@@ -4183,7 +4326,10 @@ mod tests {
 
         let presets = collect_local_service_presets(&[project], &HashSet::new());
         assert!(presets.len() >= 5);
-        let ollama = presets.iter().find(|preset| preset.name == "ollama").unwrap();
+        let ollama = presets
+            .iter()
+            .find(|preset| preset.name == "ollama")
+            .unwrap();
         assert!(ollama
             .used_by_projects
             .iter()
@@ -4670,11 +4816,9 @@ pub fn run() {
                 data_dir.join("logs"),
                 persisted_executions,
             )?);
-            let (gateway_port, local_https_status) =
-                tauri::async_runtime::block_on(gateway::start_gateway(
-                    Arc::clone(&store),
-                    data_dir.clone(),
-                ))?;
+            let (gateway_port, local_https_status) = tauri::async_runtime::block_on(
+                gateway::start_gateway(Arc::clone(&store), data_dir.clone()),
+            )?;
             refresh_routes(&store, gateway_port)?;
 
             app.manage(AppState {
@@ -4711,6 +4855,7 @@ pub fn run() {
             install_local_https,
             list_local_service_presets,
             inspect_local_service,
+            install_local_service,
             start_local_service,
             restart_local_service,
             stop_local_service,
