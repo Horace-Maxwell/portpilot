@@ -51,6 +51,12 @@ const NAV_ITEMS: NavKey[] = [
   "settings",
 ];
 
+type StackPreparationResult = {
+  ready: boolean;
+  report: DoctorReport | null;
+  appliedDefaults: number;
+};
+
 export default function App() {
   const [view, setView] = useState<NavKey>("dashboard");
   const [locale, setLocale] = useState<Locale>(() => {
@@ -144,6 +150,95 @@ export default function App() {
       }),
     [logQuery, logStreamFilter, selectedLogs],
   );
+  const viewHeader = useMemo(() => {
+    switch (view) {
+      case "dashboard":
+        return {
+          eyebrow: "workspace deck",
+          title: t(
+            "Operate your localhost workspace from one cockpit",
+            "在一个控制台里管理整个 localhost 工作区",
+          ),
+          description: t(
+            "Launch stacks, restore sessions, and keep repo health, routes, and services visible without leaving the desktop cockpit.",
+            "在一个桌面工作台里启动整栈、恢复工作区，并持续查看仓库健康状态、路由和依赖服务。",
+          ),
+        };
+      case "import":
+        return {
+          eyebrow: "repo intake",
+          title: t("Import or register local-first repos", "导入或注册本地优先仓库"),
+          description: t(
+            "Bring GitHub repos into PortPilot or scan existing roots, then let Doctor, presets, and routes do the heavy lifting.",
+            "把 GitHub 仓库拉进 PortPilot，或扫描现有工作区，然后交给 Doctor、预设和路由接管后续流程。",
+          ),
+        };
+      case "projects":
+        return {
+          eyebrow: "managed projects",
+          title: selectedProject
+            ? selectedProject.name
+            : t("Inspect every managed project in one place", "在一个地方检查所有托管项目"),
+          description: selectedProject
+            ? selectedProject.root_path
+            : t(
+                "See the recommended target, Doctor blockers, env presets, and runtime for every repo without layout overload.",
+                "在不拥挤的布局里查看每个仓库的推荐目标、Doctor 阻塞项、环境变量预设和运行时。",
+              ),
+        };
+      case "runtime":
+        return {
+          eyebrow: "runtime console",
+          title: t(
+            "Trusted HTTPS, local services, and live project state",
+            "受信任 HTTPS、本地服务与实时项目状态",
+          ),
+          description: t(
+            "Keep gateway.localhost, managed dependencies, and runtime health in one platform console.",
+            "把 gateway.localhost、受管依赖和运行时健康状态收进同一个平台控制台。",
+          ),
+        };
+      case "routes":
+        return {
+          eyebrow: "route map",
+          title: t("Every managed route in one table", "统一查看所有托管路由"),
+          description: t(
+            "Review path and subdomain URLs before you open, embed, or share a local stack.",
+            "在打开、嵌入或分享本地整栈之前，先统一查看路径和子域名路由。",
+          ),
+        };
+      case "ports":
+        return {
+          eyebrow: "port center",
+          title: t("Track ownership across every localhost port", "跟踪每个 localhost 端口的归属"),
+          description: t(
+            "See which action owns which port, and whether PortPilot or an external process is holding it.",
+            "查看哪个动作占用了哪个端口，以及它是由 PortPilot 还是外部进程持有的。",
+          ),
+        };
+      case "logs":
+        return {
+          eyebrow: "live output",
+          title: t(
+            "Searchable logs for installs, runs, builds, and services",
+            "可搜索的安装、运行、构建与服务日志",
+          ),
+          description: t(
+            "Filter stdout, stderr, and system output without losing the context of each execution.",
+            "在不丢失执行上下文的前提下，筛选 stdout、stderr 和 system 输出。",
+          ),
+        };
+      case "settings":
+        return {
+          eyebrow: "workspace settings",
+          title: t("Tune roots, updates, and product defaults", "调整工作区根目录、更新与产品默认值"),
+          description: t(
+            "Keep PortPilot pointed at the right roots, version channel, language, and localhost HTTPS status.",
+            "让 PortPilot 始终指向正确的工作区根目录、版本通道、语言和 localhost HTTPS 状态。",
+          ),
+        };
+    }
+  }, [locale, selectedProject, view]);
 
   useEffect(() => {
     void refreshAll();
@@ -454,7 +549,7 @@ export default function App() {
     await runBusy(`batch-${kind}`, async () => {
       let result: BatchActionResult;
       if (kind === "run") {
-        result = await api.runBatchAction(selectedProjectIds);
+        result = await api.launchBatchStacks(selectedProjectIds);
       } else if (kind === "stop") {
         result = await api.stopProjects(selectedProjectIds);
       } else if (kind === "restart") {
@@ -475,6 +570,110 @@ export default function App() {
           setSelectedProjectId(firstStarted.project_id);
         }
       }
+    });
+  }
+
+  function buildEnvDraft(project: ManagedProject) {
+    const values: Record<string, string> = {};
+    for (const field of project.env_template) {
+      values[field.key] =
+        project.env_profile.values[field.key] ?? field.default_value ?? "";
+    }
+    for (const [key, value] of Object.entries(project.env_profile.values)) {
+      values[key] = value;
+    }
+    return values;
+  }
+
+  async function prepareProjectStack(project: ManagedProject): Promise<StackPreparationResult> {
+    const presets = await api.listEnvGroupPresets(project.id).catch(() => [] as EnvGroupPreset[]);
+    const nextValues = buildEnvDraft(project);
+    let appliedDefaults = 0;
+
+    for (const preset of presets) {
+      for (const [key, value] of Object.entries(preset.values)) {
+        if (!nextValues[key]?.trim()) {
+          nextValues[key] = value;
+          appliedDefaults += 1;
+        }
+      }
+    }
+
+    if (appliedDefaults > 0) {
+      await api.saveEnvProfile(
+        project.id,
+        nextValues,
+        project.env_profile.raw_editor_text ?? null,
+      );
+    }
+
+    const report = await api.getDoctorReport(project.id).catch(() => null);
+    if (report?.missing_env_keys.length) {
+      setSelectedProjectId(project.id);
+      setView("projects");
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `已为 ${project.name} 预填 ${appliedDefaults} 个本地默认值，但仍有 ${report.missing_env_keys.length} 个必填环境变量需要你手动补齐。`
+          : `Applied ${appliedDefaults} local default value(s) for ${project.name}, but ${report.missing_env_keys.length} required environment value(s) still need your input.`,
+      );
+      await refreshAll();
+      return { ready: false, report, appliedDefaults };
+    }
+
+    if (appliedDefaults > 0) {
+      await refreshAll();
+    }
+
+    return { ready: true, report, appliedDefaults };
+  }
+
+  async function handleLaunchStack(project: ManagedProject) {
+    await runBusy(`launch-stack-${project.id}`, async () => {
+      const prepared = await prepareProjectStack(project);
+      if (!prepared.ready) {
+        return;
+      }
+      const result = await api.launchProjectStack(project.id);
+      await refreshAll();
+      setSelectedProjectId(project.id);
+      const item = result.items[0];
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${project.name}：${item?.message ?? "已启动整栈。"}`
+          : `${project.name}: ${item?.message ?? "Launched stack."}`,
+      );
+    });
+  }
+
+  async function handleRestartStack(project: ManagedProject) {
+    await runBusy(`restart-stack-${project.id}`, async () => {
+      const prepared = await prepareProjectStack(project);
+      if (!prepared.ready) {
+        return;
+      }
+      const result = await api.restartProjectStack(project.id);
+      await refreshAll();
+      setSelectedProjectId(project.id);
+      const item = result.items[0];
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${project.name}：${item?.message ?? "已重启整栈。"}`
+          : `${project.name}: ${item?.message ?? "Restarted stack."}`,
+      );
+    });
+  }
+
+  async function handleStopStack(project: ManagedProject) {
+    await runBusy(`stop-stack-${project.id}`, async () => {
+      const result = await api.stopProjectStack(project.id);
+      await refreshAll();
+      setSelectedProjectId(project.id);
+      const item = result.items[0];
+      setStatusMessage(
+        locale === "zh-CN"
+          ? `${project.name}：${item?.message ?? "已停止整栈。"}`
+          : `${project.name}: ${item?.message ?? "Stopped stack."}`,
+      );
     });
   }
 
@@ -831,53 +1030,56 @@ export default function App() {
         </nav>
 
         <div className="sidebar__footer">
-          <div className="action-row">
+          <div className="locale-switch">
             <button
-              className={locale === "en" ? "secondary-button" : "ghost-button"}
+              className={locale === "en" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
               onClick={() => setLocale("en")}
               type="button"
             >
               EN
             </button>
             <button
-              className={locale === "zh-CN" ? "secondary-button" : "ghost-button"}
+              className={locale === "zh-CN" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
               onClick={() => setLocale("zh-CN")}
               type="button"
             >
               中文
             </button>
           </div>
-          <button className="secondary-button" onClick={() => void refreshAll()} type="button">
-            {t("Refresh", "刷新")}
-          </button>
-          <button className="primary-button" onClick={() => void handleScan()} type="button">
-            {t("Scan Roots", "扫描工作区")}
-          </button>
-          <p>{statusMessage}</p>
+          <div className="sidebar__status">
+            <strong>{t("Last status", "最新状态")}</strong>
+            <p>{statusMessage}</p>
+          </div>
         </div>
       </aside>
 
       <main className="main">
-        <header className="hero">
-          <div>
-            <span className="hero__eyebrow">PortPilot v1</span>
-            <h2>{t(
-              "One-click control for repos like Crucix and WorldMonitor",
-              "像 Crucix 和 WorldMonitor 这样的仓库，也能一键控制",
-            )}</h2>
+        <header className="workspace-header">
+          <div className="workspace-header__copy">
+            <span className="hero__eyebrow">{viewHeader.eyebrow}</span>
+            <h2>{viewHeader.title}</h2>
+            <p>{viewHeader.description}</p>
           </div>
-          <div className="hero__actions">
-            <button className="secondary-button" onClick={() => setView("import")} type="button">
-              {t("Import Repo", "导入仓库")}
-            </button>
-            <button className="primary-button" onClick={() => setView("projects")} type="button">
-              {t("Open Projects", "打开项目")}
+          <div className="workspace-header__actions">
+            {view !== "import" && (
+              <button className="secondary-button" onClick={() => setView("import")} type="button">
+                {t("Import Repo", "导入仓库")}
+              </button>
+            )}
+            {view !== "projects" && (
+              <button className="secondary-button" onClick={() => setView("projects")} type="button">
+                {t("Open Projects", "打开项目")}
+              </button>
+            )}
+            <button className="ghost-button" onClick={() => void refreshAll()} type="button">
+              {t("Refresh", "刷新")}
             </button>
           </div>
         </header>
 
+        <div className="main__scroll">
         {view === "dashboard" && (
-          <section className="panel-grid">
+          <section className="panel-grid dashboard-grid">
             <section className="panel panel--wide">
               <div className="panel__header">
                 <div>
@@ -947,16 +1149,17 @@ export default function App() {
                         <p className="project-card__summary">{project.project_profile.summary}</p>
                       )}
                       <div className="action-row">
-                        {runAction && (
-                          <button className="primary-button" onClick={() => void handleRunAction(project, runAction)} type="button">
-                            {t("Run", "运行")}
-                          </button>
-                        )}
-                        <button className="secondary-button" onClick={() => void handleStop(project)} type="button">
-                          {t("Stop", "停止")}
+                        <button className="primary-button" onClick={() => void handleLaunchStack(project)} type="button">
+                          {t("Launch Stack", "启动整栈")}
+                        </button>
+                        <button className="secondary-button" onClick={() => void handleRestartStack(project)} type="button">
+                          {t("Restart Stack", "重启整栈")}
+                        </button>
+                        <button className="secondary-button" onClick={() => void handleStopStack(project)} type="button">
+                          {t("Stop Stack", "停止整栈")}
                         </button>
                         <button
-                          className="secondary-button"
+                          className="ghost-button"
                           onClick={() => {
                             const url = preferredProjectUrl(project);
                             setEmbedUrl(url);
@@ -968,6 +1171,11 @@ export default function App() {
                         </button>
                       </div>
                       <div className="action-row">
+                        {runAction && (
+                          <button className="ghost-button" onClick={() => void handleRunAction(project, runAction)} type="button">
+                            {t("Run Raw Action", "直接运行")}
+                          </button>
+                        )}
                         {buildAction && (
                           <button className="ghost-button" onClick={() => void handleRunAction(project, buildAction)} type="button">
                             {t("Build", "构建")}
@@ -978,6 +1186,16 @@ export default function App() {
                             {t("Deploy", "部署")}
                           </button>
                         )}
+                        {!runAction && (
+                          <button className="ghost-button" onClick={() => void handleStop(project)} type="button">
+                            {t("Stop Active Execution", "停止当前执行")}
+                          </button>
+                        )}
+                        {runAction && (
+                          <button className="ghost-button" onClick={() => void handleStop(project)} type="button">
+                            {t("Stop Active Execution", "停止当前执行")}
+                          </button>
+                        )}
                       </div>
                     </article>
                   );
@@ -985,7 +1203,7 @@ export default function App() {
               </div>
             </section>
 
-            <section className="panel">
+            <section className="panel dashboard-side-panel">
               <div className="panel__header">
                 <div>
                   <h3>{t("Saved Sessions", "已保存工作区")}</h3>
@@ -1005,7 +1223,7 @@ export default function App() {
                         onClick={() => void handleBatchAction("restore", session.id)}
                         type="button"
                       >
-                        {t("Restore", "恢复")}
+                        {t("Restore Workspace", "恢复工作区")}
                       </button>
                       <button
                         className="ghost-button"
@@ -1024,7 +1242,7 @@ export default function App() {
                   />
                 )}
               </div>
-              <div className="panel__header">
+              <div className="panel__header panel__header--compact">
                 <div>
                   <h3>{t("Live Preview", "实时预览")}</h3>
                   <p>{t("Open the routed app inside PortPilot when you want quick verification.", "需要快速验证时，直接在 PortPilot 内打开路由后的应用。")}</p>
@@ -1043,58 +1261,81 @@ export default function App() {
         )}
 
         {view === "import" && (
-          <section className="panel-grid panel-grid--double">
-            <section className="panel">
+          <section className="import-layout">
+            <section className="panel section-card import-intake">
               <div className="panel__header">
-                <h3>{t("Import from GitHub", "从 GitHub 导入")}</h3>
-                <p>{t("Paste a repository URL, clone it into your workspace, then let PortPilot infer actions and env.", "粘贴仓库 URL，把它 clone 到工作区，然后让 PortPilot 自动推断动作和环境变量。")}</p>
+                <div>
+                  <h3>{t("Import from GitHub", "从 GitHub 导入")}</h3>
+                  <p>{t("Paste a repository URL, clone it into your workspace, then let PortPilot infer actions and env.", "粘贴仓库 URL，把它 clone 到工作区，然后让 PortPilot 自动推断动作和环境变量。")}</p>
+                </div>
               </div>
-              <label className="field">
-                <span>{t("GitHub URL", "GitHub 地址")}</span>
-                <input value={importUrl} onInput={(event) => setImportUrl(event.currentTarget.value)} />
-              </label>
-              <label className="field">
-                <span>{t("Workspace Root", "工作区根目录")}</span>
-                <input
-                  value={importRootDraft}
-                  onInput={(event) => setImportRootDraft(event.currentTarget.value)}
-                />
-              </label>
-              <button
-                className="primary-button"
-                disabled={busyKey === "import"}
-                onClick={() => void handleImportGit()}
-                type="button"
-              >
-                {t("Clone + Register", "克隆并注册")}
-              </button>
+              <div className="import-layout__body">
+                <label className="field">
+                  <span>{t("GitHub URL", "GitHub 地址")}</span>
+                  <input value={importUrl} onInput={(event) => setImportUrl(event.currentTarget.value)} />
+                </label>
+                <label className="field">
+                  <span>{t("Workspace Root", "工作区根目录")}</span>
+                  <input
+                    value={importRootDraft}
+                    onInput={(event) => setImportRootDraft(event.currentTarget.value)}
+                  />
+                </label>
+                <div className="info-banner">
+                  <strong>{t("One-click intake", "一键接入")}</strong>
+                  <p>
+                    {t(
+                      "PortPilot will infer actions, env, routes, Doctor checks, local services, and a recommended stack path right after registration.",
+                      "PortPilot 会在注册后立即推断动作、环境变量、路由、Doctor 检查、本地服务和推荐整栈路径。",
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="page-toolbar page-toolbar--compact">
+                <button
+                  className="primary-button"
+                  disabled={busyKey === "import"}
+                  onClick={() => void handleImportGit()}
+                  type="button"
+                >
+                  {t("Clone + Register", "克隆并注册")}
+                </button>
+              </div>
+              <div className="import-intake__notes">
+                <div className="definition">
+                  <span>{t("Best for", "最适合")}</span>
+                  <strong>{t("New repos you want PortPilot to fully manage", "想让 PortPilot 完整接管的新仓库")}</strong>
+                </div>
+                <div className="definition">
+                  <span>{t("What happens next", "下一步会发生什么")}</span>
+                  <strong>{t("Doctor, env presets, routes, runtime profile, and stack actions appear automatically", "Doctor、环境预设、路由、运行画像和整栈动作会自动出现")}</strong>
+                </div>
+              </div>
             </section>
 
-            <section className="panel">
-              <div className="panel__header">
-                <h3>{t("Scan Existing Roots", "扫描现有工作区")}</h3>
-                <p>{t("PortPilot detects Node, Python, Rust, Go, and Compose repos already on disk.", "PortPilot 会检测磁盘上已有的 Node、Python、Rust、Go 和 Compose 仓库。")}</p>
+            <section className="panel section-card section-card--scroll import-results">
+              <div className="panel__header panel__header--sticky">
+                <div>
+                  <h3>{t("Scan Existing Roots", "扫描现有工作区")}</h3>
+                  <p>{t("PortPilot detects Node, Python, Rust, Go, and Compose repos already on disk.", "PortPilot 会检测磁盘上已有的 Node、Python、Rust、Go 和 Compose 仓库。")}</p>
+                </div>
+                <button
+                  className="secondary-button"
+                  disabled={busyKey === "scan"}
+                  onClick={() => void handleScan()}
+                  type="button"
+                >
+                  {t("Scan Now", "立即扫描")}
+                </button>
               </div>
-              <button
-                className="secondary-button"
-                disabled={busyKey === "scan"}
-                onClick={() => void handleScan()}
-                type="button"
-              >
-                {t("Scan Now", "立即扫描")}
-              </button>
-              <div className="candidate-list">
+              <div className="candidate-list candidate-list--scroll">
                 {candidates.map((candidate) => (
-                  <article key={candidate.root_path} className="candidate-card">
-                    <div>
-                      <h4>{candidate.name}</h4>
-                      <p>{candidate.root_path}</p>
-                      {candidate.project_profile.summary && (
-                        <p className="candidate-card__hint">{candidate.project_profile.summary}</p>
-                      )}
-                      {candidate.readme_hints[0] && (
-                        <p className="candidate-card__hint">{t("README hint", "README 提示")}: {candidate.readme_hints[0]}</p>
-                      )}
+                  <article key={candidate.root_path} className="candidate-card candidate-card--stacked">
+                    <div className="candidate-card__title-row">
+                      <div>
+                        <h4>{candidate.name}</h4>
+                        <p className="candidate-card__path">{candidate.root_path}</p>
+                      </div>
                     </div>
                     <div className="candidate-card__meta">
                       <span>{formatProfileKind(candidate.project_profile.kind, locale)}</span>
@@ -1106,9 +1347,22 @@ export default function App() {
                       {candidate.has_env_template && <span>{t(".env template", ".env 模板")}</span>}
                       {candidate.has_docker_compose && <span>Compose</span>}
                     </div>
-                    <button className="primary-button" onClick={() => void handleRegisterCandidate(candidate)} type="button">
-                      {t("Register", "注册")}
-                    </button>
+                    {candidate.project_profile.summary && (
+                      <p className="candidate-card__hint">{candidate.project_profile.summary}</p>
+                    )}
+                    {candidate.readme_hints[0] && (
+                      <p className="candidate-card__hint">{t("README hint", "README 提示")}: {candidate.readme_hints[0]}</p>
+                    )}
+                    <div className="candidate-card__footer">
+                      <small>
+                        {candidate.workspace_target_count > 0
+                          ? t("Ready to register with a recommended stack path.", "可以直接注册，并生成推荐整栈路径。")
+                          : t("Ready to register and infer the best next step.", "可以直接注册，并推断最佳下一步。")}
+                      </small>
+                      <button className="primary-button" onClick={() => void handleRegisterCandidate(candidate)} type="button">
+                        {t("Register", "注册")}
+                      </button>
+                    </div>
                   </article>
                 ))}
                 {candidates.length === 0 && (
@@ -1188,9 +1442,30 @@ export default function App() {
                       <button className="secondary-button" onClick={() => void handleWriteRecipe()} type="button">
                         {t("Write .portpilot.json", "写入 .portpilot.json")}
                       </button>
+                      <button
+                        className="primary-button"
+                        onClick={() => void handleLaunchStack(selectedProject)}
+                        type="button"
+                      >
+                        {t("Launch Stack", "启动整栈")}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => void handleRestartStack(selectedProject)}
+                        type="button"
+                      >
+                        {t("Restart Stack", "重启整栈")}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => void handleStopStack(selectedProject)}
+                        type="button"
+                      >
+                        {t("Stop Stack", "停止整栈")}
+                      </button>
                       {firstAction(selectedProject, "run") && (
                         <button
-                          className="primary-button"
+                          className="ghost-button"
                           onClick={() => {
                             const runAction = firstAction(selectedProject, "run");
                             if (runAction) {
@@ -1205,7 +1480,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="section-grid">
+                  <div className="project-detail-stack">
                     <section className="subpanel">
                       <h4>{t("Overview", "概览")}</h4>
                       <Definition label={t("Status", "状态")} value={formatRuntimeStatus(selectedProject.status, locale)} />
@@ -1494,6 +1769,26 @@ export default function App() {
 
                     <section className="subpanel">
                       <h4>{t("Actions", "动作")}</h4>
+                      <div className="info-banner">
+                        <strong>{t("Stack Actions", "整栈动作")}</strong>
+                        <p>
+                          {t(
+                            "Launch Stack will apply safe local defaults, start managed dependencies, and then run the recommended entrypoint.",
+                            "启动整栈会先填入安全的本地默认值、启动可受管依赖，然后再运行推荐入口。",
+                          )}
+                        </p>
+                      </div>
+                      <div className="action-row action-row--toolbar">
+                        <button className="primary-button" onClick={() => void handleLaunchStack(selectedProject)} type="button">
+                          {t("Launch Stack", "启动整栈")}
+                        </button>
+                        <button className="secondary-button" onClick={() => void handleRestartStack(selectedProject)} type="button">
+                          {t("Restart Stack", "重启整栈")}
+                        </button>
+                        <button className="ghost-button" onClick={() => void handleStopStack(selectedProject)} type="button">
+                          {t("Stop Stack", "停止整栈")}
+                        </button>
+                      </div>
                       <div className="action-stack">
                         {selectedProject.actions.map((action) => (
                           <div key={action.id} className="action-line">
@@ -1735,302 +2030,336 @@ export default function App() {
         )}
 
         {view === "runtime" && (
-          <section className="panel panel--wide">
-            <div className="panel__header">
-              <div>
-                <h3>{t("Unified Runtime", "统一运行时")}</h3>
-                <p>{t("See local processes, compose-backed apps, health signals, and routes in one place.", "在一个地方查看本地进程、Compose 应用、健康状态和路由。")}</p>
-              </div>
-            </div>
-            <div className="panel__header">
-              <div>
-                <h3>{t("Local Service Presets", "本地服务预设")}</h3>
-                <p>{t("Track shared localhost dependencies like Ollama, Redis, MongoDB, Postgres, and Meilisearch before you launch app stacks.", "在启动应用栈之前，先跟踪像 Ollama、Redis、MongoDB、Postgres 和 Meilisearch 这样的共享 localhost 依赖。")}</p>
-              </div>
-            </div>
-            {localHttpsStatus && (
-              <article className="runtime-node-card runtime-node-card--service">
-                <div className="runtime-summary__row">
-                  <div>
-                    <strong>{t("Local HTTPS", "本地 HTTPS")}</strong>
-                    <p>{localizeBackendMessage(localHttpsStatus.detail, locale) ?? t("PortPilot can now expose localhost projects over HTTPS when a local certificate is available.", "PortPilot 现在可以在本地证书可用时通过 HTTPS 暴露 localhost 项目。")}</p>
-                  </div>
-                  <span className={`status-pill ${localHttpsStatus.certificate_state === "trusted" ? "status-pill--doctor-ok" : localHttpsStatus.enabled ? "status-pill--doctor-warn" : "status-pill--doctor-info"}`}>
-                    {formatHttpsState(localHttpsStatus, locale)}
-                  </span>
+          <section className="panel panel--wide runtime-console">
+            <section className="runtime-console__block runtime-console__block--hero">
+              <div className="runtime-console__block-header">
+                <div>
+                  <h3>{t("Trusted HTTPS", "受信任 HTTPS")}</h3>
+                  <p>{t("Expose your localhost stacks through gateway.localhost with the clearest possible trust state.", "通过 gateway.localhost 暴露本机整栈，并清楚显示当前证书信任状态。")}</p>
                 </div>
-                  <div className="runtime-summary__meta">
-                    <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
-                    <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
-                    <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
-                  </div>
-                  <p className="runtime-summary__copy">
-                    {t("Recommended gateway", "推荐网关")}: {preferredGatewayUrl(localHttpsStatus)}
-                  </p>
-                  {localHttpsStatus.restart_required && (
-                    <div className="info-banner">
-                      <strong>{t("Restart needed", "需要重启")}</strong>
-                      <p>
-                        {t(
-                          "PortPilot already prepared a trusted certificate, but the active HTTPS listener is still using the older self-signed certificate. Restart PortPilot to switch over.",
-                          "PortPilot 已经准备好了受信任证书，但当前 HTTPS 监听器仍在使用旧的自签名证书。重启 PortPilot 后才会切换过去。",
-                        )}
-                      </p>
+              </div>
+              <div className="runtime-console__section">
+                {localHttpsStatus && (
+                  <article className="runtime-node-card runtime-node-card--service runtime-node-card--hero">
+                    <div className="runtime-summary__row">
+                      <div>
+                        <strong>{t("Local HTTPS", "本地 HTTPS")}</strong>
+                        <p>{localizeBackendMessage(localHttpsStatus.detail, locale) ?? t("PortPilot can now expose localhost projects over HTTPS when a local certificate is available.", "PortPilot 现在可以在本地证书可用时通过 HTTPS 暴露 localhost 项目。")}</p>
+                      </div>
+                      <span className={`status-pill ${localHttpsStatus.certificate_state === "trusted" ? "status-pill--doctor-ok" : localHttpsStatus.enabled ? "status-pill--doctor-warn" : "status-pill--doctor-info"}`}>
+                        {formatHttpsState(localHttpsStatus, locale)}
+                      </span>
                     </div>
-                  )}
-                  {localHttpsStatus.certificate_state === "needs_trust" && (
-                    <div className="info-banner">
-                      <strong>{t("Manual trust step", "需要手动信任")}</strong>
-                      <p>
-                        {t(
-                          "PortPilot is already using mkcert-generated localhost certificates, but macOS still needs you to approve the CA trust step. Run mkcert -install in Terminal, approve the prompt, then refresh HTTPS here.",
-                          "PortPilot 已经在使用 mkcert 生成的 localhost 证书，但 macOS 仍需要你手动完成 CA 信任。请在终端运行 mkcert -install，通过系统授权后，再回来刷新这里的 HTTPS 状态。",
-                        )}
-                      </p>
+                    <div className="runtime-summary__meta">
+                      <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
+                      <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
+                      <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
                     </div>
-                  )}
-                  <div className="action-row">
-                    {localHttpsStatus.certificate_state !== "trusted" && localHttpsStatus.certificate_state !== "needs_trust" && (
-                      <button
-                        className="primary-button"
-                        onClick={() => void handleInstallTrustedHttps()}
-                        type="button"
-                      >
-                        {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
-                      </button>
+                    <p className="runtime-summary__copy">
+                      {t("Recommended gateway", "推荐网关")}: {preferredGatewayUrl(localHttpsStatus)}
+                    </p>
+                    {localHttpsStatus.restart_required && (
+                      <div className="info-banner">
+                        <strong>{t("Restart needed", "需要重启")}</strong>
+                        <p>
+                          {t(
+                            "PortPilot already prepared a trusted certificate, but the active HTTPS listener is still using the older self-signed certificate. Restart PortPilot to switch over.",
+                            "PortPilot 已经准备好了受信任证书，但当前 HTTPS 监听器仍在使用旧的自签名证书。重启 PortPilot 后才会切换过去。",
+                          )}
+                        </p>
+                      </div>
                     )}
                     {localHttpsStatus.certificate_state === "needs_trust" && (
-                      <button
-                        className="primary-button"
-                        onClick={() => void handleCopyTrustCommand()}
-                        type="button"
-                      >
-                        {t("Copy Trust Command", "复制信任命令")}
-                      </button>
+                      <div className="info-banner">
+                        <strong>{t("Manual trust step", "需要手动信任")}</strong>
+                        <p>
+                          {t(
+                            "PortPilot is already using mkcert-generated localhost certificates, but macOS still needs you to approve the CA trust step. Run mkcert -install in Terminal, approve the prompt, then refresh HTTPS here.",
+                            "PortPilot 已经在使用 mkcert 生成的 localhost 证书，但 macOS 仍需要你手动完成 CA 信任。请在终端运行 mkcert -install，通过系统授权后，再回来刷新这里的 HTTPS 状态。",
+                          )}
+                        </p>
+                      </div>
                     )}
-                    <button
-                      className="secondary-button"
-                      onClick={() => void openUrl(preferredGatewayUrl(localHttpsStatus))}
-                      type="button"
-                    >
-                      {t("Open Gateway", "打开网关")}
-                    </button>
-                    <button
-                      className="ghost-button"
-                      onClick={() =>
-                        void handleCopyText(
-                          preferredGatewayUrl(localHttpsStatus),
-                          locale === "zh-CN" ? "网关地址" : "gateway URL",
-                        )
-                      }
-                      type="button"
-                    >
-                      {t("Copy Gateway URL", "复制网关地址")}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => void handleRefreshHttps()}
-                      type="button"
-                    >
-                      {t("Refresh HTTPS", "刷新 HTTPS")}
-                    </button>
-                  </div>
-                </article>
-              )}
-            <div className="runtime-node-grid">
-              {localServicePresets.map((service) => (
-                <article key={service.name} className="runtime-node-card runtime-node-card--service">
-                  <div className="runtime-summary__row">
-                    <div>
-                      <strong>{service.label}</strong>
-                      <p>{service.hint ? localizeBackendMessage(service.hint, locale) : t("Shared localhost dependency", "共享 localhost 依赖")}</p>
-                    </div>
-                    <span className={`status-pill ${service.status === "ready" ? "status-pill--doctor-ok" : service.status === "unmanaged_already_running" ? "status-pill--doctor-info" : "status-pill--doctor-warn"}`}>
-                      {formatLocalServiceStatus(service.status, locale)}
-                    </span>
-                  </div>
-                  <div className="runtime-summary__meta">
-                    <span>{t("Port", "端口")}: {service.port ?? "n/a"}</span>
-                    <span>{t("Used by", "被以下项目使用")}: {service.used_by_projects.length}</span>
-                    {service.management_kind && (
-                      <span>
-                        {t("Managed via", "管理方式")}: {service.management_kind === "docker" ? "Docker" : t("Native", "原生")}
-                      </span>
-                    )}
-                    {service.auto_started && (
-                      <span>{t("Auto-started by PortPilot", "由 PortPilot 自动拉起")}</span>
-                    )}
-                  </div>
-                  {service.used_by_projects.length > 0 && (
-                    <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
-                  )}
-                  {service.ready_detail && (
-                    <p className="runtime-summary__copy">{localizeBackendMessage(service.ready_detail, locale)}</p>
-                  )}
-                  {service.status === "unmanaged_already_running" && (
-                    <div className="info-banner">
-                      <strong>{t("External instance reused", "已复用外部实例")}</strong>
-                      <p>
-                        {t(
-                          "PortPilot found this dependency already running on its default localhost port and will reuse it without taking ownership.",
-                          "PortPilot 检测到这个依赖已经占用了默认 localhost 端口，因此会直接复用它，而不会接管它。",
-                        )}
-                      </p>
-                    </div>
-                  )}
-                  {service.start_command && (
-                    <code className="runtime-node-card__log">{service.start_command}</code>
-                  )}
-                  {service.setup_command && service.status === "unmanaged" && (
-                    <code className="runtime-node-card__log">{service.setup_command}</code>
-                  )}
-                  {service.stop_command && service.status === "ready" && (
-                    <code className="runtime-node-card__log">{service.stop_command}</code>
-                  )}
-                  <div className="action-row">
-                    {service.setup_command && service.status === "unmanaged" && (
-                      <button
-                        className="primary-button"
-                        onClick={() => void handleInstallService(service)}
-                        type="button"
-                      >
-                        {t("Install Service", "安装服务")}
-                      </button>
-                    )}
-                    {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
-                      <button
-                        className="primary-button"
-                        onClick={() => void handleStartService(service)}
-                        type="button"
-                      >
-                        {t("Start Service", "启动服务")}
-                      </button>
-                    )}
-                    {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
+                    <div className="action-row runtime-console__hero-actions">
+                      {localHttpsStatus.certificate_state !== "trusted" && localHttpsStatus.certificate_state !== "needs_trust" && (
+                        <button
+                          className="primary-button"
+                          onClick={() => void handleInstallTrustedHttps()}
+                          type="button"
+                        >
+                          {t("Install Trusted HTTPS", "安装受信任 HTTPS")}
+                        </button>
+                      )}
+                      {localHttpsStatus.certificate_state === "needs_trust" && (
+                        <button
+                          className="primary-button"
+                          onClick={() => void handleCopyTrustCommand()}
+                          type="button"
+                        >
+                          {t("Copy Trust Command", "复制信任命令")}
+                        </button>
+                      )}
                       <button
                         className="secondary-button"
-                        onClick={() => void handleRestartService(service)}
+                        onClick={() => void openUrl(preferredGatewayUrl(localHttpsStatus))}
                         type="button"
                       >
-                        {t("Restart Service", "重启服务")}
+                        {t("Open Gateway", "打开网关")}
                       </button>
-                    )}
-                    {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
                       <button
                         className="ghost-button"
-                        onClick={() => void handleStopService(service)}
+                        onClick={() =>
+                          void handleCopyText(
+                            preferredGatewayUrl(localHttpsStatus),
+                            locale === "zh-CN" ? "网关地址" : "gateway URL",
+                          )
+                        }
                         type="button"
                       >
-                        {t("Stop Service", "停止服务")}
+                        {t("Copy Gateway URL", "复制网关地址")}
                       </button>
-                    )}
-                    {service.start_command && (
                       <button
                         className="secondary-button"
-                        onClick={() => void handleCopyServiceCommand(service)}
+                        onClick={() => void handleRefreshHttps()}
                         type="button"
                       >
-                        {t("Copy Start Command", "复制启动命令")}
+                        {t("Refresh HTTPS", "刷新 HTTPS")}
                       </button>
-                    )}
-                    {service.setup_command && service.status === "unmanaged" && (
-                      <button
-                        className="secondary-button"
-                        onClick={() => void handleCopyServiceSetupCommand(service)}
-                        type="button"
-                      >
-                        {t("Copy Setup Command", "复制安装命令")}
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-              {localServicePresets.length === 0 && (
-                <EmptyState
-                  title={t("No shared local services detected", "还没有检测到共享本地服务")}
-                  description={t("Import AI, gateway, or compose-heavy repos and PortPilot will surface common local dependencies here.", "导入 AI、网关或 Compose 较重的仓库后，PortPilot 会在这里显示常见本地依赖。")}
-                />
-              )}
-            </div>
-            <div className="runtime-node-grid">
-              {runtimeNodes.map((node) => (
-                <article key={node.project_id} className="runtime-node-card">
-                  <div className="runtime-summary__row">
-                    <div>
-                      <strong>{node.project_name}</strong>
-                      <p>{node.execution_label ?? t("No active execution", "没有活跃执行")}</p>
                     </div>
-                    <span className={`status-pill status-pill--${node.status}`}>
-                      {formatRuntimeStatus(node.status, locale)}
-                    </span>
-                  </div>
-                  <div className="runtime-summary__meta">
-                    <span>{t("Profile", "画像")}: {formatProfileKind(node.kind, locale)}</span>
-                    <span>{t("Phase", "阶段")}: {formatRunPhase(node.run_phase, locale)}</span>
-                    <span>{t("Port", "端口")}: {node.port ?? "n/a"}</span>
-                    <span>{formatRuntimeKind(node.runtime_kind, locale)}</span>
-                  </div>
-                  {node.local_urls.length > 0 && (
-                    <div className="runtime-summary__meta">
-                      {node.local_urls.map((localUrl) => (
-                        <span key={`${node.project_id}-${localUrl.url}`}>
-                          {formatLocalUrlKind(localUrl.kind, locale)}: {localUrl.url}
-                          {localUrl.recommended ? ` • ${t("Recommended", "推荐")}` : ""}
+                  </article>
+                )}
+              </div>
+            </section>
+
+            <section className="runtime-console__block">
+              <div className="runtime-console__block-header">
+                <div>
+                  <h3>{t("Local Services Console", "本地服务控制台")}</h3>
+                  <p>{t("Manage shared localhost dependencies like Ollama, Redis, MongoDB, Postgres, and Meilisearch before you launch app stacks.", "在启动应用整栈之前，先统一管理像 Ollama、Redis、MongoDB、Postgres 和 Meilisearch 这样的共享 localhost 依赖。")}</p>
+                </div>
+              </div>
+              <div className="runtime-console__section">
+                <div className="runtime-node-grid runtime-node-grid--services">
+                  {localServicePresets.map((service) => (
+                    <article key={service.name} className="runtime-node-card runtime-node-card--service">
+                      <div className="runtime-summary__row">
+                        <div>
+                          <strong>{service.label}</strong>
+                          <p>{service.hint ? localizeBackendMessage(service.hint, locale) : t("Shared localhost dependency", "共享 localhost 依赖")}</p>
+                        </div>
+                        <span className={`status-pill ${service.status === "ready" ? "status-pill--doctor-ok" : service.status === "unmanaged_already_running" ? "status-pill--doctor-info" : "status-pill--doctor-warn"}`}>
+                          {formatLocalServiceStatus(service.status, locale)}
                         </span>
-                      ))}
-                    </div>
+                      </div>
+                      <div className="runtime-summary__meta">
+                        <span>{t("Port", "端口")}: {service.port ?? "n/a"}</span>
+                        <span>{t("Used by", "被以下项目使用")}: {service.used_by_projects.length}</span>
+                        {service.management_kind && (
+                          <span>
+                            {t("Managed via", "管理方式")}: {service.management_kind === "docker" ? "Docker" : t("Native", "原生")}
+                          </span>
+                        )}
+                        {service.auto_started && (
+                          <span>{t("Auto-started by PortPilot", "由 PortPilot 自动拉起")}</span>
+                        )}
+                      </div>
+                      {service.used_by_projects.length > 0 && (
+                        <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
+                      )}
+                      {service.ready_detail && (
+                        <p className="runtime-summary__copy">{localizeBackendMessage(service.ready_detail, locale)}</p>
+                      )}
+                      {service.status === "unmanaged_already_running" && (
+                        <div className="info-banner">
+                          <strong>{t("External instance reused", "已复用外部实例")}</strong>
+                          <p>
+                            {t(
+                              "PortPilot found this dependency already running on its default localhost port and will reuse it without taking ownership.",
+                              "PortPilot 检测到这个依赖已经占用了默认 localhost 端口，因此会直接复用它，而不会接管它。",
+                            )}
+                          </p>
+                        </div>
+                      )}
+                      <div className="runtime-node-card__command-stack">
+                        {service.start_command && (
+                          <code className="runtime-node-card__log">{service.start_command}</code>
+                        )}
+                        {service.setup_command && service.status === "unmanaged" && (
+                          <code className="runtime-node-card__log">{service.setup_command}</code>
+                        )}
+                        {service.stop_command && service.status === "ready" && (
+                          <code className="runtime-node-card__log">{service.stop_command}</code>
+                        )}
+                      </div>
+                      <div className="action-row runtime-node-card__actions">
+                        {service.setup_command && service.status === "unmanaged" && (
+                          <button
+                            className="primary-button"
+                            onClick={() => void handleInstallService(service)}
+                            type="button"
+                          >
+                            {t("Install Service", "安装服务")}
+                          </button>
+                        )}
+                        {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
+                          <button
+                            className="primary-button"
+                            onClick={() => void handleStartService(service)}
+                            type="button"
+                          >
+                            {t("Start Service", "启动服务")}
+                          </button>
+                        )}
+                        {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
+                          <button
+                            className="secondary-button"
+                            onClick={() => void handleRestartService(service)}
+                            type="button"
+                          >
+                            {t("Restart Service", "重启服务")}
+                          </button>
+                        )}
+                        {service.ready && service.managed && service.status !== "unmanaged_already_running" && (
+                          <button
+                            className="ghost-button"
+                            onClick={() => void handleStopService(service)}
+                            type="button"
+                          >
+                            {t("Stop Service", "停止服务")}
+                          </button>
+                        )}
+                        {service.start_command && (
+                          <button
+                            className="secondary-button"
+                            onClick={() => void handleCopyServiceCommand(service)}
+                            type="button"
+                          >
+                            {t("Copy Start Command", "复制启动命令")}
+                          </button>
+                        )}
+                        {service.setup_command && service.status === "unmanaged" && (
+                          <button
+                            className="secondary-button"
+                            onClick={() => void handleCopyServiceSetupCommand(service)}
+                            type="button"
+                          >
+                            {t("Copy Setup Command", "复制安装命令")}
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                  {localServicePresets.length === 0 && (
+                    <EmptyState
+                      title={t("No shared local services detected", "还没有检测到共享本地服务")}
+                      description={t("Import AI, gateway, or compose-heavy repos and PortPilot will surface common local dependencies here.", "导入 AI、网关或 Compose 较重的仓库后，PortPilot 会在这里显示常见本地依赖。")}
+                    />
                   )}
-                  {node.health?.summary && <p className="runtime-summary__copy">{localizeBackendMessage(node.health.summary, locale)}</p>}
-                  {node.health?.readiness_reason && (
-                    <small className="runtime-summary__reason">{localizeBackendMessage(node.health.readiness_reason, locale)}</small>
+                </div>
+              </div>
+            </section>
+
+            <section className="runtime-console__block">
+              <div className="runtime-console__block-header">
+                <div>
+                  <h3>{t("Project Runtime", "项目运行时")}</h3>
+                  <p>{t("See recommended entrypoints, local URLs, service dependencies, and recent signals for every managed project.", "查看每个托管项目的推荐入口、本地 URL、服务依赖和最近运行信号。")}</p>
+                </div>
+              </div>
+              <div className="runtime-console__section">
+                <div className="runtime-node-grid runtime-node-grid--projects">
+                  {runtimeNodes.map((node) => (
+                    <article key={node.project_id} className="runtime-node-card">
+                      <div className="runtime-summary__row">
+                        <div>
+                          <strong>{node.project_name}</strong>
+                          <p>{node.execution_label ?? t("No active execution", "没有活跃执行")}</p>
+                        </div>
+                        <span className={`status-pill status-pill--${node.status}`}>
+                          {formatRuntimeStatus(node.status, locale)}
+                        </span>
+                      </div>
+                      <div className="runtime-summary__meta">
+                        <span>{t("Profile", "画像")}: {formatProfileKind(node.kind, locale)}</span>
+                        <span>{t("Phase", "阶段")}: {formatRunPhase(node.run_phase, locale)}</span>
+                        <span>{t("Port", "端口")}: {node.port ?? "n/a"}</span>
+                        <span>{formatRuntimeKind(node.runtime_kind, locale)}</span>
+                      </div>
+                      {node.local_urls.length > 0 && (
+                        <div className="runtime-summary__meta">
+                          {node.local_urls.map((localUrl) => (
+                            <span key={`${node.project_id}-${localUrl.url}`}>
+                              {formatLocalUrlKind(localUrl.kind, locale)}: {localUrl.url}
+                              {localUrl.recommended ? ` • ${t("Recommended", "推荐")}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {node.health?.summary && <p className="runtime-summary__copy">{localizeBackendMessage(node.health.summary, locale)}</p>}
+                      {node.health?.readiness_reason && (
+                        <small className="runtime-summary__reason">{localizeBackendMessage(node.health.readiness_reason, locale)}</small>
+                      )}
+                      {node.recommended_action && (
+                        <div className="info-banner">
+                          <strong>{t("Recommended action", "推荐动作")}</strong>
+                          <p>{localizeBackendMessage(node.recommended_action, locale)}</p>
+                        </div>
+                      )}
+                      {!node.dependencies_ready && (
+                        <span className="status-pill status-pill--doctor-warn">{t("Waiting for services", "等待服务")}</span>
+                      )}
+                      {node.services.length > 0 && (
+                        <div className="compose-service-list">
+                          {node.services.map((service) => (
+                            <article key={`${node.project_id}-${service.name}`} className="compose-service-chip">
+                              <strong>{service.name}</strong>
+                              <span>{localizeBackendMessage(service.state ?? "unknown", locale)}</span>
+                              {service.health && <span>{localizeBackendMessage(service.health, locale)}</span>}
+                              {service.published_ports[0] && <code>{service.published_ports[0]}</code>}
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                      {node.last_log && <code className="runtime-node-card__log">{node.last_log}</code>}
+                      <div className="action-row runtime-node-card__actions">
+                        <button
+                          className="primary-button"
+                          onClick={() => {
+                            const project = projects.find((item) => item.id === node.project_id);
+                            if (project) {
+                              void handleLaunchStack(project);
+                            }
+                          }}
+                          type="button"
+                        >
+                          {t("Launch Stack", "启动整栈")}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          onClick={() => void openUrl(preferredRuntimeNodeUrl(node))}
+                          type="button"
+                        >
+                          {t("Open Route", "打开路由")}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          onClick={() => {
+                            setSelectedProjectId(node.project_id);
+                            setView("projects");
+                          }}
+                          type="button"
+                        >
+                          {t("Inspect Project", "查看项目")}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {runtimeNodes.length === 0 && (
+                    <EmptyState title={t("No runtime nodes yet", "还没有运行节点")} description={t("Import a repo and start a run action to populate the runtime surface.", "导入仓库并启动 run 动作后，这里就会出现运行时节点。")} />
                   )}
-                  {node.recommended_action && (
-                    <div className="info-banner">
-                      <strong>{t("Recommended action", "推荐动作")}</strong>
-                      <p>{localizeBackendMessage(node.recommended_action, locale)}</p>
-                    </div>
-                  )}
-                  {!node.dependencies_ready && (
-                    <span className="status-pill status-pill--doctor-warn">{t("Waiting for services", "等待服务")}</span>
-                  )}
-                  {node.services.length > 0 && (
-                    <div className="compose-service-list">
-                      {node.services.map((service) => (
-                        <article key={`${node.project_id}-${service.name}`} className="compose-service-chip">
-                          <strong>{service.name}</strong>
-                          <span>{localizeBackendMessage(service.state ?? "unknown", locale)}</span>
-                          {service.health && <span>{localizeBackendMessage(service.health, locale)}</span>}
-                          {service.published_ports[0] && <code>{service.published_ports[0]}</code>}
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                  {node.last_log && <code className="runtime-node-card__log">{node.last_log}</code>}
-                  <div className="action-row">
-                    <button
-                      className="secondary-button"
-                      onClick={() => void openUrl(preferredRuntimeNodeUrl(node))}
-                      type="button"
-                    >
-                      {t("Open Route", "打开路由")}
-                    </button>
-                    <button
-                      className="ghost-button"
-                      onClick={() => {
-                        setSelectedProjectId(node.project_id);
-                        setView("projects");
-                      }}
-                      type="button"
-                    >
-                      {t("Inspect Project", "查看项目")}
-                    </button>
-                  </div>
-                </article>
-              ))}
-              {runtimeNodes.length === 0 && (
-                <EmptyState title={t("No runtime nodes yet", "还没有运行节点")} description={t("Import a repo and start a run action to populate the runtime surface.", "导入仓库并启动 run 动作后，这里就会出现运行时节点。")} />
-              )}
-            </div>
+                </div>
+              </div>
+            </section>
           </section>
         )}
 
@@ -2227,6 +2556,7 @@ export default function App() {
             </section>
           </section>
         )}
+        </div>
       </main>
     </div>
   );
@@ -2520,13 +2850,13 @@ function SelectionToolbar(props: {
       <span>{props.selectedCount} {props.locale === "zh-CN" ? "已选择" : "selected"}</span>
       <div className="action-row">
         <button className="primary-button" disabled={props.selectedCount === 0} onClick={props.onRun} type="button">
-          {props.locale === "zh-CN" ? "启动所选" : "Start Selected"}
+          {props.locale === "zh-CN" ? "启动所选整栈" : "Launch Selected"}
         </button>
         <button className="secondary-button" disabled={props.selectedCount === 0} onClick={props.onStop} type="button">
-          {props.locale === "zh-CN" ? "停止所选" : "Stop Selected"}
+          {props.locale === "zh-CN" ? "停止所选整栈" : "Stop Selected"}
         </button>
         <button className="secondary-button" disabled={props.selectedCount === 0} onClick={props.onRestart} type="button">
-          {props.locale === "zh-CN" ? "重启所选" : "Restart Selected"}
+          {props.locale === "zh-CN" ? "重启所选整栈" : "Restart Selected"}
         </button>
         <button className="ghost-button" disabled={props.selectedCount === 0} onClick={props.onSaveSession} type="button">
           {props.locale === "zh-CN" ? "保存为工作区" : "Save as Session"}

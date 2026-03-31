@@ -506,6 +506,15 @@ fn run_batch_action(
 }
 
 #[tauri::command]
+fn launch_batch_stacks(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ids: Vec<String>,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "run", project_ids)
+}
+
+#[tauri::command]
 fn stop_projects(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -521,6 +530,33 @@ fn restart_projects(
     project_ids: Vec<String>,
 ) -> Result<BatchActionResult, String> {
     execute_batch_action(app, state, "restart", project_ids)
+}
+
+#[tauri::command]
+fn launch_project_stack(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "run", vec![project_id])
+}
+
+#[tauri::command]
+fn restart_project_stack(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "restart", vec![project_id])
+}
+
+#[tauri::command]
+fn stop_project_stack(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<BatchActionResult, String> {
+    execute_batch_action(app, state, "stop", vec![project_id])
 }
 
 #[tauri::command]
@@ -4866,6 +4902,10 @@ pub fn run() {
             run_batch_action,
             stop_projects,
             restart_projects,
+            launch_batch_stacks,
+            launch_project_stack,
+            restart_project_stack,
+            stop_project_stack,
             restore_workspace_session,
             restart_project,
             run_project_action,

@@ -63,6 +63,14 @@ export const api = {
     invoke<BatchActionResult>("restore_workspace_session", { sessionId }),
   runBatchAction: (projectIds: string[]) =>
     invoke<BatchActionResult>("run_batch_action", { projectIds }),
+  launchBatchStacks: (projectIds: string[]) =>
+    invoke<BatchActionResult>("launch_batch_stacks", { projectIds }),
+  launchProjectStack: (projectId: string) =>
+    invoke<BatchActionResult>("launch_project_stack", { projectId }),
+  restartProjectStack: (projectId: string) =>
+    invoke<BatchActionResult>("restart_project_stack", { projectId }),
+  stopProjectStack: (projectId: string) =>
+    invoke<BatchActionResult>("stop_project_stack", { projectId }),
   listRuntimeNodes: () => invoke<RuntimeNode[]>("list_runtime_nodes"),
   getLocalHttpsStatus: () => invoke<LocalHttpsStatus>("get_local_https_status"),
   refreshLocalHttpsStatus: () => invoke<LocalHttpsStatus>("refresh_local_https_status"),
