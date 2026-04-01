@@ -2074,52 +2074,30 @@ export default function App() {
               <div className="runtime-console__block-header">
                 <div>
                   <h3>{t("Trusted HTTPS", "受信任 HTTPS")}</h3>
-                  <p>{t("Expose your localhost stacks through gateway.localhost with the clearest possible trust state.", "通过 gateway.localhost 暴露本机整栈，并清楚显示当前证书信任状态。")}</p>
+                  <p>{t("Keep gateway.localhost ready, trusted, and easy to open from one compact bar.", "在一个紧凑概要条里保持 gateway.localhost 可用、可信且便于直接打开。")}</p>
                 </div>
               </div>
               <div className="runtime-console__section">
                 {localHttpsStatus && (
-                  <article className="runtime-node-card runtime-node-card--service runtime-node-card--hero">
-                    <div className="runtime-summary__row">
-                      <div>
-                        <strong>{t("Local HTTPS", "本地 HTTPS")}</strong>
-                        <p>{localizeBackendMessage(localHttpsStatus.detail, locale) ?? t("PortPilot can now expose localhost projects over HTTPS when a local certificate is available.", "PortPilot 现在可以在本地证书可用时通过 HTTPS 暴露 localhost 项目。")}</p>
+                  <article className="runtime-https-bar">
+                    <div className="runtime-https-bar__main">
+                      <div className="runtime-https-bar__headline">
+                        <div>
+                          <strong>{t("Local HTTPS", "本地 HTTPS")}</strong>
+                          <p>{localizeBackendMessage(localHttpsStatus.detail, locale) ?? t("PortPilot can expose localhost projects over HTTPS when a local certificate is available.", "PortPilot 会在本地证书可用时通过 HTTPS 暴露 localhost 项目。")}</p>
+                        </div>
+                        <span className={`status-pill ${localHttpsStatus.certificate_state === "trusted" ? "status-pill--doctor-ok" : localHttpsStatus.enabled ? "status-pill--doctor-warn" : "status-pill--doctor-info"}`}>
+                          {formatHttpsState(localHttpsStatus, locale)}
+                        </span>
                       </div>
-                      <span className={`status-pill ${localHttpsStatus.certificate_state === "trusted" ? "status-pill--doctor-ok" : localHttpsStatus.enabled ? "status-pill--doctor-warn" : "status-pill--doctor-info"}`}>
-                        {formatHttpsState(localHttpsStatus, locale)}
-                      </span>
+                      <div className="runtime-https-bar__meta">
+                        <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
+                        <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
+                        <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
+                        <span>{t("Gateway", "网关")}: {preferredGatewayUrl(localHttpsStatus)}</span>
+                      </div>
                     </div>
-                    <div className="runtime-summary__meta">
-                      <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
-                      <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
-                      <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
-                    </div>
-                    <p className="runtime-summary__copy">
-                      {t("Recommended gateway", "推荐网关")}: {preferredGatewayUrl(localHttpsStatus)}
-                    </p>
-                    {localHttpsStatus.restart_required && (
-                      <div className="info-banner">
-                        <strong>{t("Restart needed", "需要重启")}</strong>
-                        <p>
-                          {t(
-                            "PortPilot already prepared a trusted certificate, but the active HTTPS listener is still using the older self-signed certificate. Restart PortPilot to switch over.",
-                            "PortPilot 已经准备好了受信任证书，但当前 HTTPS 监听器仍在使用旧的自签名证书。重启 PortPilot 后才会切换过去。",
-                          )}
-                        </p>
-                      </div>
-                    )}
-                    {localHttpsStatus.certificate_state === "needs_trust" && (
-                      <div className="info-banner">
-                        <strong>{t("Manual trust step", "需要手动信任")}</strong>
-                        <p>
-                          {t(
-                            "PortPilot is already using mkcert-generated localhost certificates, but macOS still needs you to approve the CA trust step. Run mkcert -install in Terminal, approve the prompt, then refresh HTTPS here.",
-                            "PortPilot 已经在使用 mkcert 生成的 localhost 证书，但 macOS 仍需要你手动完成 CA 信任。请在终端运行 mkcert -install，通过系统授权后，再回来刷新这里的 HTTPS 状态。",
-                          )}
-                        </p>
-                      </div>
-                    )}
-                    <div className="action-row runtime-console__hero-actions">
+                    <div className="runtime-https-bar__actions">
                       {localHttpsStatus.certificate_state !== "trusted" && localHttpsStatus.certificate_state !== "needs_trust" && (
                         <button
                           className="primary-button"
@@ -2165,6 +2143,32 @@ export default function App() {
                         {t("Refresh HTTPS", "刷新 HTTPS")}
                       </button>
                     </div>
+                    {(localHttpsStatus.restart_required || localHttpsStatus.certificate_state === "needs_trust") && (
+                      <div className="runtime-https-bar__alerts">
+                        {localHttpsStatus.restart_required && (
+                          <div className="info-banner">
+                            <strong>{t("Restart needed", "需要重启")}</strong>
+                            <p>
+                              {t(
+                                "PortPilot already prepared a trusted certificate, but the active HTTPS listener is still using the older self-signed certificate. Restart PortPilot to switch over.",
+                                "PortPilot 已经准备好了受信任证书，但当前 HTTPS 监听器仍在使用旧的自签名证书。重启 PortPilot 后才会切换过去。",
+                              )}
+                            </p>
+                          </div>
+                        )}
+                        {localHttpsStatus.certificate_state === "needs_trust" && (
+                          <div className="info-banner">
+                            <strong>{t("Manual trust step", "需要手动信任")}</strong>
+                            <p>
+                              {t(
+                                "PortPilot is already using mkcert-generated localhost certificates, but macOS still needs you to approve the CA trust step. Run mkcert -install in Terminal, approve the prompt, then refresh HTTPS here.",
+                                "PortPilot 已经在使用 mkcert 生成的 localhost 证书，但 macOS 仍需要你手动完成 CA 信任。请在终端运行 mkcert -install，通过系统授权后，再回来刷新这里的 HTTPS 状态。",
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </article>
                 )}
               </div>
@@ -2182,7 +2186,7 @@ export default function App() {
                   {localServicePresets.map((service) => (
                     <article key={service.name} className="runtime-node-card runtime-node-card--service">
                       <div className="runtime-summary__row">
-                        <div>
+                        <div className="runtime-service-card__headline">
                           <strong>{service.label}</strong>
                           <p>{service.hint ? localizeBackendMessage(service.hint, locale) : t("Shared localhost dependency", "共享 localhost 依赖")}</p>
                         </div>
@@ -2202,29 +2206,31 @@ export default function App() {
                           <span>{t("Auto-started by PortPilot", "由 PortPilot 自动拉起")}</span>
                         )}
                       </div>
-                      {service.used_by_projects.length > 0 && (
-                        <p className="runtime-summary__copy">{service.used_by_projects.join(" • ")}</p>
-                      )}
-                      {service.ready_detail && (
-                        <p className="runtime-summary__copy">{localizeBackendMessage(service.ready_detail, locale)}</p>
-                      )}
-                      {service.status === "unmanaged_already_running" && (
-                        <div className="info-banner">
-                          <strong>{t("External instance reused", "已复用外部实例")}</strong>
-                          <p>
-                            {t(
-                              "PortPilot found this dependency already running on its default localhost port and will reuse it without taking ownership.",
-                              "PortPilot 检测到这个依赖已经占用了默认 localhost 端口，因此会直接复用它，而不会接管它。",
-                            )}
-                          </p>
-                        </div>
-                      )}
-                      <div className="runtime-node-card__command-stack">
-                        {service.start_command && (
-                          <code className="runtime-node-card__log">{service.start_command}</code>
+                      <div className="runtime-service-card__body">
+                        {service.used_by_projects.length > 0 && (
+                          <p className="runtime-summary__copy runtime-service-card__detail">{service.used_by_projects.join(" • ")}</p>
                         )}
+                        {service.ready_detail && (
+                          <p className="runtime-summary__copy runtime-service-card__detail">{localizeBackendMessage(service.ready_detail, locale)}</p>
+                        )}
+                        {service.status === "unmanaged_already_running" && (
+                          <div className="info-banner">
+                            <strong>{t("External instance reused", "已复用外部实例")}</strong>
+                            <p>
+                              {t(
+                                "PortPilot found this dependency already running on its default localhost port and will reuse it without taking ownership.",
+                                "PortPilot 检测到这个依赖已经占用了默认 localhost 端口，因此会直接复用它，而不会接管它。",
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="runtime-node-card__command-stack">
                         {service.setup_command && service.status === "unmanaged" && (
                           <code className="runtime-node-card__log">{service.setup_command}</code>
+                        )}
+                        {service.start_command && (
+                          <code className="runtime-node-card__log">{service.start_command}</code>
                         )}
                         {service.stop_command && service.status === "ready" && (
                           <code className="runtime-node-card__log">{service.stop_command}</code>
@@ -2242,7 +2248,7 @@ export default function App() {
                         )}
                         {service.start_command && (service.status === "stopped" || service.status === "failed" || service.status === "unmanaged") && service.managed && (
                           <button
-                            className="primary-button"
+                            className={service.setup_command && service.status === "unmanaged" ? "secondary-button" : "primary-button"}
                             onClick={() => void handleStartService(service)}
                             type="button"
                           >
@@ -2267,24 +2273,17 @@ export default function App() {
                             {t("Stop Service", "停止服务")}
                           </button>
                         )}
-                        {service.start_command && (
-                          <button
-                            className="secondary-button"
-                            onClick={() => void handleCopyServiceCommand(service)}
-                            type="button"
-                          >
-                            {t("Copy Start Command", "复制启动命令")}
-                          </button>
-                        )}
-                        {service.setup_command && service.status === "unmanaged" && (
-                          <button
-                            className="secondary-button"
-                            onClick={() => void handleCopyServiceSetupCommand(service)}
-                            type="button"
-                          >
-                            {t("Copy Setup Command", "复制安装命令")}
-                          </button>
-                        )}
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            service.status === "unmanaged" && service.setup_command
+                              ? void handleCopyServiceSetupCommand(service)
+                              : void handleCopyServiceCommand(service)
+                          }
+                          type="button"
+                        >
+                          {t("Copy Command", "复制命令")}
+                        </button>
                       </div>
                     </article>
                   ))}
