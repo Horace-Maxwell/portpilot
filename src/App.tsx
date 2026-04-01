@@ -2094,7 +2094,10 @@ export default function App() {
                         <span>{t("HTTP", "HTTP")}: {localHttpsStatus.http_port}</span>
                         <span>{t("HTTPS", "HTTPS")}: {localHttpsStatus.https_port ?? "n/a"}</span>
                         <span>{t("Provider", "来源")}: {localHttpsStatus.provider ?? t("Missing", "缺失")}</span>
-                        <span>{t("Gateway", "网关")}: {preferredGatewayUrl(localHttpsStatus)}</span>
+                      </div>
+                      <div className="runtime-https-bar__gateway">
+                        <span>{t("Recommended gateway", "推荐网关")}</span>
+                        <code>{preferredGatewayUrl(localHttpsStatus)}</code>
                       </div>
                     </div>
                     <div className="runtime-https-bar__actions">
@@ -2206,10 +2209,21 @@ export default function App() {
                           <span>{t("Auto-started by PortPilot", "由 PortPilot 自动拉起")}</span>
                         )}
                       </div>
+                      {service.used_by_projects.length > 0 && (
+                        <div className="runtime-service-card__project-list">
+                          {service.used_by_projects.slice(0, 3).map((projectName) => (
+                            <span key={`${service.name}-${projectName}`} className="compose-service-chip">
+                              <strong>{projectName}</strong>
+                            </span>
+                          ))}
+                          {service.used_by_projects.length > 3 && (
+                            <span className="compose-service-chip">
+                              <strong>+{service.used_by_projects.length - 3}</strong>
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div className="runtime-service-card__body">
-                        {service.used_by_projects.length > 0 && (
-                          <p className="runtime-summary__copy runtime-service-card__detail">{service.used_by_projects.join(" • ")}</p>
-                        )}
                         {service.ready_detail && (
                           <p className="runtime-summary__copy runtime-service-card__detail">{localizeBackendMessage(service.ready_detail, locale)}</p>
                         )}

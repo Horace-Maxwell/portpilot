@@ -964,8 +964,8 @@ textarea {
 
 .runtime-console__block {
   display: grid;
-  gap: 0.9rem;
-  padding: 1rem;
+  gap: 0.8rem;
+  padding: 0.95rem;
   border-radius: 20px;
   border: 1px solid rgba(118, 149, 196, 0.12);
   background:
@@ -1007,8 +1007,8 @@ textarea {
 
 .runtime-https-bar {
   display: grid;
-  gap: 0.9rem;
-  padding: 1rem 1.05rem;
+  gap: 0.8rem;
+  padding: 0.95rem 1rem;
   border-radius: 18px;
   border: 1px solid rgba(129, 174, 232, 0.18);
   background:
@@ -1019,7 +1019,7 @@ textarea {
 
 .runtime-https-bar__main {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.6rem;
 }
 
 .runtime-https-bar__headline {
@@ -1047,6 +1047,27 @@ textarea {
   gap: 0.65rem 1rem;
   color: #8ea4c1;
   font-size: 0.83rem;
+}
+
+.runtime-https-bar__gateway {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.runtime-https-bar__gateway span {
+  color: #8ea4c1;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.runtime-https-bar__gateway code {
+  display: block;
+  padding: 0.72rem 0.82rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #dbe7ff;
+  word-break: break-word;
 }
 
 .runtime-https-bar__actions {
@@ -1144,7 +1165,7 @@ textarea {
 }
 
 .runtime-node-grid--services {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .runtime-node-grid--projects {
@@ -1166,8 +1187,8 @@ textarea {
 .runtime-node-card--service {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
+  gap: 0.68rem;
+  padding: 0.95rem;
 }
 
 .runtime-service-card__headline {
@@ -1178,22 +1199,28 @@ textarea {
 .runtime-service-card__headline p {
   margin: 0;
   color: #dfe8f8;
-  line-height: 1.42;
+  line-height: 1.38;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
+.runtime-service-card__project-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .runtime-service-card__body {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.6rem;
   min-height: 0;
 }
 
 .runtime-service-card__detail {
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1206,7 +1233,7 @@ textarea {
 
 .runtime-node-card__log {
   display: block;
-  padding: 0.8rem 0.9rem;
+  padding: 0.72rem 0.82rem;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.22);
   color: #d8e7ff;
@@ -1218,6 +1245,7 @@ textarea {
 .runtime-node-card__actions {
   margin-top: 0;
   align-items: stretch;
+  gap: 0.55rem;
 }
 
 .runtime-console__hero-actions {
