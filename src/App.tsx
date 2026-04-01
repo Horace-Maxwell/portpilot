@@ -158,88 +158,55 @@ export default function App() {
     switch (view) {
       case "dashboard":
         return {
-          eyebrow: "workspace deck",
-          title: t(
-            "Operate your localhost workspace from one cockpit",
-            "在一个控制台里管理整个 localhost 工作区",
-          ),
-          description: t(
-            "Launch stacks, restore sessions, and keep repo health, routes, and services visible without leaving the desktop cockpit.",
-            "在一个桌面工作台里启动整栈、恢复工作区，并持续查看仓库健康状态、路由和依赖服务。",
-          ),
+          eyebrow: "dashboard",
+          title: t("Dashboard", "总览"),
+          description: t("Projects, sessions, and preview.", "项目、会话与预览。"),
         };
       case "import":
         return {
-          eyebrow: "repo intake",
-          title: t("Import or register local-first repos", "导入或注册本地优先仓库"),
-          description: t(
-            "Bring GitHub repos into PortPilot or scan existing roots, then let Doctor, presets, and routes do the heavy lifting.",
-            "把 GitHub 仓库拉进 PortPilot，或扫描现有工作区，然后交给 Doctor、预设和路由接管后续流程。",
-          ),
+          eyebrow: "import",
+          title: t("Import", "导入"),
+          description: t("Clone or register a repo.", "克隆或注册仓库。"),
         };
       case "projects":
         return {
-          eyebrow: "managed projects",
+          eyebrow: "projects",
           title: selectedProject
             ? selectedProject.name
-            : t("Inspect every managed project in one place", "在一个地方检查所有托管项目"),
+            : t("Projects", "项目"),
           description: selectedProject
             ? selectedProject.root_path
-            : t(
-                "See the recommended target, Doctor blockers, env presets, and runtime for every repo without layout overload.",
-                "在不拥挤的布局里查看每个仓库的推荐目标、Doctor 阻塞项、环境变量预设和运行时。",
-              ),
+            : t("Doctor, env, runtime, and targets.", "Doctor、环境、运行时与目标。"),
         };
       case "runtime":
         return {
-          eyebrow: "runtime console",
-          title: t(
-            "Trusted HTTPS, local services, and live project state",
-            "受信任 HTTPS、本地服务与实时项目状态",
-          ),
-          description: t(
-            "Keep gateway.localhost, managed dependencies, and runtime health in one platform console.",
-            "把 gateway.localhost、受管依赖和运行时健康状态收进同一个平台控制台。",
-          ),
+          eyebrow: "runtime",
+          title: t("Runtime", "运行时"),
+          description: t("HTTPS, services, and runs.", "HTTPS、服务与运行。"),
         };
       case "routes":
         return {
-          eyebrow: "route map",
-          title: t("Every managed route in one table", "统一查看所有托管路由"),
-          description: t(
-            "Review path and subdomain URLs before you open, embed, or share a local stack.",
-            "在打开、嵌入或分享本地整栈之前，先统一查看路径和子域名路由。",
-          ),
+          eyebrow: "routes",
+          title: t("Routes", "路由"),
+          description: t("Path and subdomain URLs.", "路径与子域名 URL。"),
         };
       case "ports":
         return {
-          eyebrow: "port center",
-          title: t("Track ownership across every localhost port", "跟踪每个 localhost 端口的归属"),
-          description: t(
-            "See which action owns which port, and whether PortPilot or an external process is holding it.",
-            "查看哪个动作占用了哪个端口，以及它是由 PortPilot 还是外部进程持有的。",
-          ),
+          eyebrow: "ports",
+          title: t("Ports", "端口"),
+          description: t("Managed ports and conflicts.", "受管端口与冲突。"),
         };
       case "logs":
         return {
-          eyebrow: "live output",
-          title: t(
-            "Searchable logs for installs, runs, builds, and services",
-            "可搜索的安装、运行、构建与服务日志",
-          ),
-          description: t(
-            "Filter stdout, stderr, and system output without losing the context of each execution.",
-            "在不丢失执行上下文的前提下，筛选 stdout、stderr 和 system 输出。",
-          ),
+          eyebrow: "logs",
+          title: t("Logs", "日志"),
+          description: t("Execution logs and search.", "执行日志与搜索。"),
         };
       case "settings":
         return {
-          eyebrow: "workspace settings",
-          title: t("Tune roots, updates, and product defaults", "调整工作区根目录、更新与产品默认值"),
-          description: t(
-            "Keep PortPilot pointed at the right roots, version channel, language, and localhost HTTPS status.",
-            "让 PortPilot 始终指向正确的工作区根目录、版本通道、语言和 localhost HTTPS 状态。",
-          ),
+          eyebrow: "settings",
+          title: t("Settings", "设置"),
+          description: t("Workspace, updates, and HTTPS.", "工作区、更新与 HTTPS。"),
         };
     }
   }, [locale, selectedProject, view]);
@@ -1003,64 +970,65 @@ export default function App() {
 
   return (
     <div className="app-frame">
-      <div className="shell">
-        <aside className="sidebar-shell">
-          <div className="sidebar">
-            <div className="brand">
-          <span className="brand__eyebrow">{t("GitHub Repo Console", "GitHub 仓库控制台")}</span>
-          <h1>PortPilot</h1>
-          <p>{t(
-            "Import, configure, run, stop, route, and package local-first repositories from one desktop cockpit.",
-            "在一个桌面控制台里完成本地优先仓库的导入、配置、运行、停止、路由和打包。",
-          )}</p>
-            </div>
-
-            <div className="stats">
-              <StatCard label={t("Managed", "已托管")} value={String(projects.length)} />
-              <StatCard label={t("Running", "运行中")} value={String(runningProjects)} />
-              <StatCard label={t("Routes", "路由")} value={String(routes.length)} />
-              <StatCard label={t("Ports", "端口")} value={String(ports.length)} />
-            </div>
-
-            <nav className="nav">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item}
-                  className={`nav__item ${view === item ? "is-active" : ""}`}
-                  onClick={() => setView(item)}
-                  type="button"
-                >
-                  {navLabel(item, locale)}
-                </button>
-              ))}
-            </nav>
-
-            <div className="sidebar__footer">
-              <div className="locale-switch">
-                <button
-                  className={locale === "en" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
-                  onClick={() => setLocale("en")}
-                  type="button"
-                >
-                  EN
-                </button>
-                <button
-                  className={locale === "zh-CN" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
-                  onClick={() => setLocale("zh-CN")}
-                  type="button"
-                >
-                  中文
-                </button>
-              </div>
-              <div className="sidebar__status">
-                <strong>{t("Last status", "最新状态")}</strong>
-                <p>{statusMessage}</p>
-              </div>
-            </div>
+      <header className="topbar-shell">
+        <div className="topbar-shell__left">
+          <div className="topbar-brand">
+            <span className="brand__eyebrow">{t("GitHub Repo Console", "GitHub 仓库控制台")}</span>
+            <strong>PortPilot</strong>
           </div>
-        </aside>
+          <nav className="topbar-nav" aria-label={t("Primary navigation", "主导航")}>
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item}
+                className={`topbar-nav__item ${view === item ? "is-active" : ""}`}
+                onClick={() => setView(item)}
+                type="button"
+              >
+                {navLabel(item, locale)}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="topbar-shell__right">
+          <div className="topbar-status">
+            <span className="topbar-status__eyebrow">{viewHeader.eyebrow}</span>
+            <strong>{viewHeader.title}</strong>
+            <p>{statusMessage}</p>
+          </div>
+          <div className="locale-switch">
+            <button
+              className={locale === "en" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
+              onClick={() => setLocale("en")}
+              type="button"
+            >
+              EN
+            </button>
+            <button
+              className={locale === "zh-CN" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
+              onClick={() => setLocale("zh-CN")}
+              type="button"
+            >
+              中文
+            </button>
+          </div>
+          {view !== "import" && (
+            <button className="secondary-button" onClick={() => setView("import")} type="button">
+              {t("Import Repo", "导入仓库")}
+            </button>
+          )}
+          {view !== "projects" && (
+            <button className="secondary-button" onClick={() => setView("projects")} type="button">
+              {t("Open Projects", "打开项目")}
+            </button>
+          )}
+          <button className="ghost-button" onClick={() => void refreshAll()} type="button">
+            {t("Refresh", "刷新")}
+          </button>
+        </div>
+      </header>
 
-        <section className="main-shell">
+      <section className="content-shell">
+        <div className="main-scroll-root">
           <header className="workspace-header">
             <div className="workspace-header__copy">
               <span className="hero__eyebrow">{viewHeader.eyebrow}</span>
@@ -1068,8 +1036,8 @@ export default function App() {
               <p>{viewHeader.description}</p>
             </div>
             <div className="workspace-header__actions">
-              {view !== "import" && (
-                <button className="secondary-button" onClick={() => setView("import")} type="button">
+              {view === "dashboard" && (
+                <button className="primary-button" onClick={() => setView("import")} type="button">
                   {t("Import Repo", "导入仓库")}
                 </button>
               )}
@@ -1078,14 +1046,8 @@ export default function App() {
                   {t("Open Projects", "打开项目")}
                 </button>
               )}
-              <button className="ghost-button" onClick={() => void refreshAll()} type="button">
-                {t("Refresh", "刷新")}
-              </button>
             </div>
           </header>
-
-          <main className="main">
-            <div className="main__scroll main-scroll-root">
         {view === "dashboard" && (
           <section className="panel-grid dashboard-grid">
             <section className="panel panel--wide">
@@ -1104,6 +1066,12 @@ export default function App() {
                   onRestart={() => void handleBatchAction("restart")}
                   onSaveSession={() => void handleSaveSession()}
                 />
+              </div>
+              <div className="dashboard-stats">
+                <StatCard label={t("Managed", "已托管")} value={String(projects.length)} />
+                <StatCard label={t("Running", "运行中")} value={String(runningProjects)} />
+                <StatCard label={t("Routes", "路由")} value={String(routes.length)} />
+                <StatCard label={t("Ports", "端口")} value={String(ports.length)} />
               </div>
               <div className="project-grid">
                 {projects.map((project) => {
@@ -2664,10 +2632,8 @@ export default function App() {
             </section>
           </section>
         )}
-            </div>
-          </main>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }
