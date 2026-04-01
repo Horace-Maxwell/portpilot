@@ -150,6 +150,10 @@ export default function App() {
       }),
     [logQuery, logStreamFilter, selectedLogs],
   );
+  const groupedFilteredLogs = useMemo(
+    () => groupLogsByExecution(filteredLogs, executions),
+    [executions, filteredLogs],
+  );
   const viewHeader = useMemo(() => {
     switch (view) {
       case "dashboard":
@@ -1427,21 +1431,13 @@ export default function App() {
             <section className="panel panel--wide">
               {selectedProject ? (
                 <>
-                  <div className="panel__header">
-                    <div>
+                  <div className="panel__header panel__header--split">
+                    <div className="project-workspace-header">
+                      <span className="hero__eyebrow">{t("Project Workspace", "项目工作台")}</span>
                       <h3>{selectedProject.name}</h3>
                       <p>{selectedProject.root_path}</p>
                     </div>
-                    <div className="action-row">
-                      <button className="secondary-button" onClick={() => void openUrl(preferredProjectUrl(selectedProject))} type="button">
-                        {t("Open Route", "打开路由")}
-                      </button>
-                      <button className="ghost-button" onClick={() => void handleCopyRecipe()} type="button">
-                        {t("Copy Recipe JSON", "复制 Recipe JSON")}
-                      </button>
-                      <button className="secondary-button" onClick={() => void handleWriteRecipe()} type="button">
-                        {t("Write .portpilot.json", "写入 .portpilot.json")}
-                      </button>
+                    <div className="action-row project-workspace-actions">
                       <button
                         className="primary-button"
                         onClick={() => void handleLaunchStack(selectedProject)}
@@ -1463,6 +1459,15 @@ export default function App() {
                       >
                         {t("Stop Stack", "停止整栈")}
                       </button>
+                      <button className="secondary-button" onClick={() => void openUrl(preferredProjectUrl(selectedProject))} type="button">
+                        {t("Open Route", "打开路由")}
+                      </button>
+                      <button className="ghost-button" onClick={() => void handleCopyRecipe()} type="button">
+                        {t("Copy Recipe JSON", "复制 Recipe JSON")}
+                      </button>
+                      <button className="secondary-button" onClick={() => void handleWriteRecipe()} type="button">
+                        {t("Write .portpilot.json", "写入 .portpilot.json")}
+                      </button>
                       {firstAction(selectedProject, "run") && (
                         <button
                           className="ghost-button"
@@ -1480,9 +1485,15 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="project-detail-stack">
-                    <section className="subpanel">
-                      <h4>{t("Overview", "概览")}</h4>
+                  <div className="project-detail-stack project-detail-stack--polished">
+                    <div className="project-stack-column">
+                    <section className="subpanel subpanel--hero">
+                      <div className="subpanel__header">
+                        <div className="subpanel__copy">
+                          <h4>{t("Overview", "概览")}</h4>
+                          <p>{t("Route, target, profile, and repo signals in one compact summary.", "在一个紧凑摘要里查看路由、目标、画像和仓库信号。")}</p>
+                        </div>
+                      </div>
                       <Definition label={t("Status", "状态")} value={formatRuntimeStatus(selectedProject.status, locale)} />
                       <Definition
                         label={t("Platform Profile", "平台画像")}
@@ -1545,8 +1556,13 @@ export default function App() {
                       )}
                     </section>
 
-                    <section className="subpanel">
-                      <h4>{t("Setup / Doctor", "初始化 / Doctor")}</h4>
+                    <section className="subpanel subpanel--hero">
+                      <div className="subpanel__header">
+                        <div className="subpanel__copy">
+                          <h4>{t("Setup / Doctor", "初始化 / Doctor")}</h4>
+                          <p>{t("Use blockers, service checks, and next-step guidance to get this repo to a clean stack launch.", "通过阻塞项、服务检查和下一步建议，把这个仓库带到可用的整栈启动状态。")}</p>
+                        </div>
+                      </div>
                       {selectedDoctorReport ? (
                         <>
                           {selectedDoctorReport.recommended_next_step && (
@@ -1768,7 +1784,12 @@ export default function App() {
                     </section>
 
                     <section className="subpanel">
-                      <h4>{t("Actions", "动作")}</h4>
+                      <div className="subpanel__header">
+                        <div className="subpanel__copy">
+                          <h4>{t("Stack Actions", "整栈动作")}</h4>
+                          <p>{t("Launch, restart, or stop the full local stack, then fall back to individual raw actions only when needed.", "优先启动、重启或停止完整本地整栈，只有必要时才退回单独原始动作。")}</p>
+                        </div>
+                      </div>
                       <div className="info-banner">
                         <strong>{t("Stack Actions", "整栈动作")}</strong>
                         <p>
@@ -1810,9 +1831,16 @@ export default function App() {
                         </button>
                       </div>
                     </section>
+                    </div>
 
-                    <section className="subpanel">
-                      <h4>{t("Environment", "环境变量")}</h4>
+                    <div className="project-stack-column">
+                    <section className="subpanel subpanel--hero">
+                      <div className="subpanel__header">
+                        <div className="subpanel__copy">
+                          <h4>{t("Environment", "环境变量")}</h4>
+                          <p>{t("Apply safe local defaults first, then fill only the values PortPilot cannot infer for you.", "先填入安全的本地默认值，再补充 PortPilot 无法替你推断的少量值。")}</p>
+                        </div>
+                      </div>
                       {selectedProject.project_profile.required_services.length > 0 && (
                         <div className="info-banner">
                           <strong>{t("Required Services", "必需服务")}</strong>
@@ -1914,9 +1942,14 @@ export default function App() {
                     </section>
 
                     <section className="subpanel">
-                      <h4>{t("Runtime", "运行时")}</h4>
+                      <div className="subpanel__header">
+                        <div className="subpanel__copy">
+                          <h4>{t("Runtime", "运行时")}</h4>
+                          <p>{t("Keep only the current project's most important runtime health, route, and execution signals here.", "这里只保留当前项目最重要的运行时健康、路由和执行信号。")}</p>
+                        </div>
+                      </div>
                       {selectedRuntimeNodes[0] && (
-                        <article className="runtime-summary">
+                        <article className="runtime-summary runtime-summary--compact">
                           <div className="runtime-summary__row">
                             <strong>{selectedRuntimeNodes[0].execution_label ?? t("No active execution", "没有活跃执行")}</strong>
                             <span className={`status-pill status-pill--${selectedRuntimeNodes[0].status}`}>
@@ -1987,12 +2020,18 @@ export default function App() {
                             description={t("Run any action above and PortPilot will stream the result here.", "运行上面的任意动作后，PortPilot 会在这里显示结果。")}
                       />
                     )}
-                  </div>
+                      </div>
                     </section>
+                    </div>
 
                     {selectedProject.workspace_targets.length > 0 && (
                       <section className="subpanel subpanel--full">
-                        <h4>{t("Detected App Targets", "检测到的应用目标")}</h4>
+                        <div className="subpanel__header">
+                          <div className="subpanel__copy">
+                            <h4>{t("Detected App Targets", "检测到的应用目标")}</h4>
+                            <p>{t("PortPilot keeps the recommended target on top, but still exposes every detected app surface in the repo.", "PortPilot 会把推荐目标放在最前面，但仍然保留仓库里检测到的所有应用入口。")}</p>
+                          </div>
+                        </div>
                         <div className="target-grid">
                           {selectedProject.workspace_targets.map((target) => (
                             <article key={target.id} className="target-card">
@@ -2411,12 +2450,14 @@ export default function App() {
 
         {view === "logs" && (
           <section className="panel panel--wide">
-            <div className="panel__header">
+            <div className="panel__header panel__header--split">
               <div>
                 <h3>{t("Live Logs", "实时日志")}</h3>
                 <p>{t("Stream action output from installs, runs, builds, deploys, and compose flows.", "串流查看安装、运行、构建、部署和 Compose 流程的输出。")}</p>
               </div>
-              <div className="log-toolbar">
+            </div>
+            <div className="logs-shell">
+              <div className="log-toolbar log-toolbar--sticky">
                 <select value={logStreamFilter} onChange={(event) => setLogStreamFilter(event.currentTarget.value as "all" | "stdout" | "stderr" | "system")}>
                   <option value="all">{t("All streams", "全部流")}</option>
                   <option value="stdout">stdout</option>
@@ -2429,12 +2470,14 @@ export default function App() {
                   onInput={(event) => setLogQuery(event.currentTarget.value)}
                 />
               </div>
-            </div>
-            <div className="log-console">
-              {groupLogsByExecution(filteredLogs, executions).map((group) => (
-                <div key={group.executionId} className="log-group">
+              <div className="log-console">
+              {groupedFilteredLogs.map((group) => (
+                <article key={group.executionId} className="log-group log-group--card">
                   <div className="log-group__header">
-                    <strong>{group.label}</strong>
+                    <div className="log-group__copy">
+                      <strong>{group.label}</strong>
+                      <span>{t("Execution stream", "执行流")}</span>
+                    </div>
                     <span>{group.entries.length} {t("lines", "行")}</span>
                   </div>
                   {group.entries.map((entry) => (
@@ -2444,88 +2487,154 @@ export default function App() {
                       <p>{entry.message}</p>
                     </div>
                   ))}
-                </div>
+                </article>
               ))}
-              {filteredLogs.length === 0 && (
+              {filteredLogs.length === 0 && selectedLogs.length > 0 && (
+                <EmptyState title={t("No matching logs", "没有匹配的日志")} description={t("Try another stream filter or search term to bring matching output back into view.", "换一个流过滤器或搜索词，重新把匹配输出带回视图。")} />
+              )}
+              {filteredLogs.length === 0 && selectedLogs.length === 0 && (
                 <EmptyState title={t("No logs yet", "还没有日志")} description={t("Run an action and PortPilot will begin streaming output.", "执行一个动作后，PortPilot 就会开始串流输出。")} />
               )}
+              </div>
             </div>
           </section>
         )}
 
         {view === "settings" && (
-          <section className="panel-grid panel-grid--double">
-            <section className="panel">
-              <div className="panel__header">
-                <h3>{t("Workspace Roots", "工作区根目录")}</h3>
-                <p>{t("One path per line. PortPilot scans these locations for existing repos and uses the first root for Git imports.", "每行一个路径。PortPilot 会扫描这些位置的现有仓库，并用第一个根目录作为 Git 导入目标。")}</p>
-              </div>
-              <textarea
-                className="settings-textarea"
-                rows={10}
-                value={workspaceDraft}
-                onInput={(event) => setWorkspaceDraft(event.currentTarget.value)}
-              />
-              <button className="primary-button" onClick={() => void handleSaveRoots()} type="button">
-                {t("Save Roots", "保存工作区")}
-              </button>
-            </section>
-            <section className="panel">
-              <div className="panel__header">
-                <h3>{t("About & Updates", "关于与更新")}</h3>
-                <p>{t("Cross-platform release status, auto-update controls, and release links.", "跨平台发布状态、自动更新控制和 release 链接。")}</p>
-              </div>
-              <Definition label={t("Current Version", "当前版本")} value={`v${currentVersion}`} />
-              <Definition
-                label={t("Update State", "更新状态")}
-                value={
-                  update.hasUpdate
-                    ? (locale === "zh-CN" ? `有可用更新：v${update.updateInfo?.availableVersion ?? "未知"}` : `Update available: v${update.updateInfo?.availableVersion ?? "unknown"}`)
-                    : update.phase === "checking"
-                      ? t("Checking for updates...", "正在检查更新...")
-                      : update.phase === "upToDate"
-                        ? t("Up to date", "已是最新")
-                        : update.phase
-                }
-              />
-              {update.hasUpdate && update.updateInfo && !update.isDismissed && (
-                <div className="update-banner">
-                  <strong>{locale === "zh-CN" ? `PortPilot ${update.updateInfo.availableVersion} 已可用。` : `PortPilot ${update.updateInfo.availableVersion} is available.`}</strong>
-                  <p>{update.updateInfo.notes ?? t("A new cross-platform release is ready to install.", "新的跨平台版本已经可以安装。")}</p>
-                  {update.progressTotal > 0 && (
-                    <p>
-                      {locale === "zh-CN" ? "已下载" : "Downloaded"} {Math.min(update.progressDownloaded, update.progressTotal)} / {update.progressTotal} bytes
-                    </p>
+          <section className="settings-layout">
+            <section className="panel settings-panel-stack">
+              <article className="settings-card settings-card--hero">
+                <div className="subpanel__header">
+                  <div className="subpanel__copy">
+                    <h4>{t("Workspace Roots", "工作区根目录")}</h4>
+                    <p>{t("One path per line. PortPilot scans these locations for existing repos and uses the first root for Git imports.", "每行一个路径。PortPilot 会扫描这些位置的现有仓库，并用第一个根目录作为 Git 导入目标。")}</p>
+                  </div>
+                </div>
+                <textarea
+                  className="settings-textarea"
+                  rows={10}
+                  value={workspaceDraft}
+                  onInput={(event) => setWorkspaceDraft(event.currentTarget.value)}
+                />
+                <div className="settings-actions">
+                  <button className="primary-button" onClick={() => void handleSaveRoots()} type="button">
+                    {t("Save Roots", "保存工作区")}
+                  </button>
+                </div>
+              </article>
+
+              <article className="settings-card">
+                <div className="subpanel__header">
+                  <div className="subpanel__copy">
+                    <h4>{t("Workspace Platform", "工作台状态")}</h4>
+                    <p>{t("Keep language, localhost platform state, and workspace summary visible in one clean control surface.", "把语言、localhost 平台状态和工作区摘要收进一个清晰的控制面板里。")}</p>
+                  </div>
+                </div>
+                <div className="settings-list">
+                  <Definition label={t("Workspace Roots", "工作区根目录")} value={String(workspaceRoots.length)} />
+                  <Definition label={t("Managed Projects", "托管项目")} value={String(projects.length)} />
+                  <Definition
+                    label={t("Running Executions", "运行中执行")}
+                    value={String(executions.filter((execution) => execution.status === "running").length)}
+                  />
+                  <Definition label={t("Language", "语言")} value={locale === "zh-CN" ? "中文" : "English"} />
+                  {localHttpsStatus && (
+                    <>
+                      <Definition label={t("Local HTTPS", "本地 HTTPS")} value={formatHttpsState(localHttpsStatus, locale)} />
+                      <Definition
+                        label={t("HTTPS Provider", "HTTPS 来源")}
+                        value={localHttpsStatus.provider ?? t("Missing", "缺失")}
+                      />
+                    </>
                   )}
-                  <div className="action-row">
-                    <button className="primary-button" onClick={() => void handleInstallUpdate()} type="button">
-                      {t("Install Update", "安装更新")}
+                  <Definition label={t("Last Status", "最新状态")} value={statusMessage} />
+                </div>
+              </article>
+            </section>
+
+            <section className="panel settings-panel-stack">
+              <article className="settings-card settings-card--hero">
+                <div className="subpanel__header">
+                  <div className="subpanel__copy">
+                    <h4>{t("About & Updates", "关于与更新")}</h4>
+                    <p>{t("Cross-platform release status, auto-update controls, and release links.", "跨平台发布状态、自动更新控制和 release 链接。")}</p>
+                  </div>
+                </div>
+                <Definition label={t("Current Version", "当前版本")} value={`v${currentVersion}`} />
+                <Definition
+                  label={t("Update State", "更新状态")}
+                  value={
+                    update.hasUpdate
+                      ? (locale === "zh-CN" ? `有可用更新：v${update.updateInfo?.availableVersion ?? "未知"}` : `Update available: v${update.updateInfo?.availableVersion ?? "unknown"}`)
+                      : update.phase === "checking"
+                        ? t("Checking for updates...", "正在检查更新...")
+                        : update.phase === "upToDate"
+                          ? t("Up to date", "已是最新")
+                          : update.phase
+                  }
+                />
+                {update.hasUpdate && update.updateInfo && !update.isDismissed && (
+                  <div className="update-banner">
+                    <strong>{locale === "zh-CN" ? `PortPilot ${update.updateInfo.availableVersion} 已可用。` : `PortPilot ${update.updateInfo.availableVersion} is available.`}</strong>
+                    <p>{update.updateInfo.notes ?? t("A new cross-platform release is ready to install.", "新的跨平台版本已经可以安装。")}</p>
+                    {update.progressTotal > 0 && (
+                      <p>
+                        {locale === "zh-CN" ? "已下载" : "Downloaded"} {Math.min(update.progressDownloaded, update.progressTotal)} / {update.progressTotal} bytes
+                      </p>
+                    )}
+                    <div className="action-row">
+                      <button className="primary-button" onClick={() => void handleInstallUpdate()} type="button">
+                        {t("Install Update", "安装更新")}
+                      </button>
+                      <button className="secondary-button" onClick={() => update.dismissUpdate()} type="button">
+                        {t("Dismiss This Version", "忽略这个版本")}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => void openUrl("https://github.com/Horace-Maxwell/portpilot/releases")}
+                        type="button"
+                      >
+                        {t("Release Notes", "更新说明")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {update.hasUpdate && update.updateInfo && update.isDismissed && (
+                  <div className="settings-actions">
+                    <button className="secondary-button" onClick={() => update.resetDismiss()} type="button">
+                      {t("Show Dismissed Update", "显示已忽略更新")}
                     </button>
-                    <button className="secondary-button" onClick={() => update.dismissUpdate()} type="button">
-                      {t("Dismiss This Version", "忽略这个版本")}
+                  </div>
+                )}
+                {!update.hasUpdate && (
+                  <div className="settings-actions">
+                    <button className="primary-button" onClick={() => void handleCheckUpdate()} type="button">
+                      {t("Check for Updates", "检查更新")}
                     </button>
                     <button
-                      className="ghost-button"
+                      className="secondary-button"
                       onClick={() => void openUrl("https://github.com/Horace-Maxwell/portpilot/releases")}
                       type="button"
                     >
-                      {t("Release Notes", "更新说明")}
+                      {t("Open Releases", "打开 Releases")}
                     </button>
                   </div>
+                )}
+                {update.error && <p className="error-copy">{update.error}</p>}
+              </article>
+
+              <article className="settings-card">
+                <div className="subpanel__header">
+                  <div className="subpanel__copy">
+                    <h4>{t("Release Channel", "发布通道")}</h4>
+                    <p>{t("Verify the desktop client, the stable feed, and the GitHub release source all point to the same product line.", "确认桌面客户端、稳定版 feed 和 GitHub 发布来源都指向同一条产品线。")}</p>
+                  </div>
                 </div>
-              )}
-              {update.hasUpdate && update.updateInfo && update.isDismissed && (
-                <div className="action-row">
-                  <button className="secondary-button" onClick={() => update.resetDismiss()} type="button">
-                    {t("Show Dismissed Update", "显示已忽略更新")}
-                  </button>
+                <div className="settings-list">
+                  <Definition label={t("Stable Feed", "稳定版 Feed")} value="latest.json" />
+                  <Definition label={t("Release Source", "发布来源")} value="GitHub Releases" />
                 </div>
-              )}
-              {!update.hasUpdate && (
-                <div className="action-row">
-                  <button className="primary-button" onClick={() => void handleCheckUpdate()} type="button">
-                    {t("Check for Updates", "检查更新")}
-                  </button>
+                <div className="settings-actions">
                   <button
                     className="secondary-button"
                     onClick={() => void openUrl("https://github.com/Horace-Maxwell/portpilot/releases")}
@@ -2534,25 +2643,7 @@ export default function App() {
                     {t("Open Releases", "打开 Releases")}
                   </button>
                 </div>
-              )}
-              {update.error && <p className="error-copy">{update.error}</p>}
-              <Definition label={t("Workspace Roots", "工作区根目录")} value={String(workspaceRoots.length)} />
-              <Definition label={t("Managed Projects", "托管项目")} value={String(projects.length)} />
-              <Definition
-                label={t("Running Executions", "运行中执行")}
-                value={String(executions.filter((execution) => execution.status === "running").length)}
-              />
-              <Definition label={t("Language", "语言")} value={locale === "zh-CN" ? "中文" : "English"} />
-              {localHttpsStatus && (
-                <>
-                  <Definition label={t("Local HTTPS", "本地 HTTPS")} value={formatHttpsState(localHttpsStatus, locale)} />
-                  <Definition
-                    label={t("HTTPS Provider", "HTTPS 来源")}
-                    value={localHttpsStatus.provider ?? t("Missing", "缺失")}
-                  />
-                </>
-              )}
-              <Definition label={t("Last Status", "最新状态")} value={statusMessage} />
+              </article>
             </section>
           </section>
         )}

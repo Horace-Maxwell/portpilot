@@ -611,6 +611,16 @@ button {
   align-items: start;
 }
 
+.project-workspace-header {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.project-workspace-actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .project-list {
   display: grid;
   gap: 0.7rem;
@@ -665,6 +675,16 @@ button {
   align-items: start;
 }
 
+.project-detail-stack--polished {
+  gap: 1.1rem;
+}
+
+.project-stack-column {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
 .subpanel {
   padding: 1rem;
   border-radius: 18px;
@@ -677,6 +697,34 @@ button {
 
 .subpanel--full {
   grid-column: 1 / -1;
+}
+
+.subpanel--hero {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.042), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.028);
+  border-color: rgba(122, 157, 214, 0.15);
+}
+
+.subpanel__header {
+  display: grid;
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+}
+
+.subpanel__copy {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.subpanel__copy h4 {
+  margin: 0;
+}
+
+.subpanel__copy p {
+  margin: 0;
+  color: #97aecb;
+  line-height: 1.45;
 }
 
 .definition {
@@ -959,6 +1007,10 @@ textarea {
   font-size: 0.82rem;
 }
 
+.runtime-summary--compact {
+  padding: 0.95rem 1rem;
+}
+
 .doctor-blocker-list,
 .doctor-port-grid,
 .doctor-requirements__grid {
@@ -1096,7 +1148,7 @@ th {
 
 .log-console {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.75rem;
   max-height: 70vh;
   overflow: auto;
   font-family:
@@ -1105,9 +1157,26 @@ th {
     monospace;
 }
 
+.logs-shell {
+  display: grid;
+  gap: 0.9rem;
+}
+
 .log-toolbar {
   align-items: center;
   justify-content: flex-end;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  border: 1px solid rgba(118, 149, 196, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.022);
+}
+
+.log-toolbar--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
 }
 
 .log-toolbar select,
@@ -1120,13 +1189,33 @@ th {
   gap: 0.4rem;
 }
 
+.log-group--card {
+  padding: 0.85rem;
+  border-radius: 16px;
+  border: 1px solid rgba(118, 149, 196, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.022);
+}
+
 .log-group__header {
-  padding: 0.45rem 0.2rem;
+  padding: 0.2rem 0.2rem 0.55rem;
+  border-bottom: 1px solid rgba(118, 149, 196, 0.1);
+}
+
+.log-group__copy {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.log-group__copy span {
+  color: #8ea4c1;
+  font-size: 0.75rem;
 }
 
 .log-line {
   display: grid;
-  grid-template-columns: 180px 80px 1fr;
+  grid-template-columns: 156px 84px 1fr;
   gap: 0.8rem;
   padding: 0.55rem 0.75rem;
   border-radius: 12px;
@@ -1170,6 +1259,47 @@ th {
   min-height: 240px;
 }
 
+.settings-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.settings-panel-stack {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.settings-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(118, 149, 196, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.022);
+}
+
+.settings-card--hero {
+  background:
+    radial-gradient(circle at top right, rgba(95, 147, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.024);
+}
+
+.settings-list {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .update-banner {
   display: grid;
   gap: 0.65rem;
@@ -1196,13 +1326,18 @@ th {
 
   .project-detail-stack,
   .panel-grid,
-  .import-layout {
+  .import-layout,
+  .settings-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .import-intake,
   .import-results {
     min-height: auto;
+  }
+
+  .project-workspace-actions {
+    justify-content: flex-start;
   }
 }
 
