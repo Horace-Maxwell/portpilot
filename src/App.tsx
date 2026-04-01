@@ -1002,86 +1002,90 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
+    <div className="app-frame">
+      <div className="shell">
+        <aside className="sidebar-shell">
+          <div className="sidebar">
+            <div className="brand">
           <span className="brand__eyebrow">{t("GitHub Repo Console", "GitHub 仓库控制台")}</span>
           <h1>PortPilot</h1>
           <p>{t(
             "Import, configure, run, stop, route, and package local-first repositories from one desktop cockpit.",
             "在一个桌面控制台里完成本地优先仓库的导入、配置、运行、停止、路由和打包。",
           )}</p>
-        </div>
+            </div>
 
-        <div className="stats">
-          <StatCard label={t("Managed", "已托管")} value={String(projects.length)} />
-          <StatCard label={t("Running", "运行中")} value={String(runningProjects)} />
-          <StatCard label={t("Routes", "路由")} value={String(routes.length)} />
-          <StatCard label={t("Ports", "端口")} value={String(ports.length)} />
-        </div>
+            <div className="stats">
+              <StatCard label={t("Managed", "已托管")} value={String(projects.length)} />
+              <StatCard label={t("Running", "运行中")} value={String(runningProjects)} />
+              <StatCard label={t("Routes", "路由")} value={String(routes.length)} />
+              <StatCard label={t("Ports", "端口")} value={String(ports.length)} />
+            </div>
 
-        <nav className="nav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item}
-              className={`nav__item ${view === item ? "is-active" : ""}`}
-              onClick={() => setView(item)}
-              type="button"
-            >
-              {navLabel(item, locale)}
-            </button>
-          ))}
-        </nav>
+            <nav className="nav">
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item}
+                  className={`nav__item ${view === item ? "is-active" : ""}`}
+                  onClick={() => setView(item)}
+                  type="button"
+                >
+                  {navLabel(item, locale)}
+                </button>
+              ))}
+            </nav>
 
-        <div className="sidebar__footer">
-          <div className="locale-switch">
-            <button
-              className={locale === "en" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
-              onClick={() => setLocale("en")}
-              type="button"
-            >
-              EN
-            </button>
-            <button
-              className={locale === "zh-CN" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
-              onClick={() => setLocale("zh-CN")}
-              type="button"
-            >
-              中文
-            </button>
+            <div className="sidebar__footer">
+              <div className="locale-switch">
+                <button
+                  className={locale === "en" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
+                  onClick={() => setLocale("en")}
+                  type="button"
+                >
+                  EN
+                </button>
+                <button
+                  className={locale === "zh-CN" ? "secondary-button locale-switch__button is-active" : "ghost-button locale-switch__button"}
+                  onClick={() => setLocale("zh-CN")}
+                  type="button"
+                >
+                  中文
+                </button>
+              </div>
+              <div className="sidebar__status">
+                <strong>{t("Last status", "最新状态")}</strong>
+                <p>{statusMessage}</p>
+              </div>
+            </div>
           </div>
-          <div className="sidebar__status">
-            <strong>{t("Last status", "最新状态")}</strong>
-            <p>{statusMessage}</p>
-          </div>
-        </div>
-      </aside>
+        </aside>
 
-      <main className="main">
-        <header className="workspace-header">
-          <div className="workspace-header__copy">
-            <span className="hero__eyebrow">{viewHeader.eyebrow}</span>
-            <h2>{viewHeader.title}</h2>
-            <p>{viewHeader.description}</p>
-          </div>
-          <div className="workspace-header__actions">
-            {view !== "import" && (
-              <button className="secondary-button" onClick={() => setView("import")} type="button">
-                {t("Import Repo", "导入仓库")}
+        <section className="main-shell">
+          <header className="workspace-header">
+            <div className="workspace-header__copy">
+              <span className="hero__eyebrow">{viewHeader.eyebrow}</span>
+              <h2>{viewHeader.title}</h2>
+              <p>{viewHeader.description}</p>
+            </div>
+            <div className="workspace-header__actions">
+              {view !== "import" && (
+                <button className="secondary-button" onClick={() => setView("import")} type="button">
+                  {t("Import Repo", "导入仓库")}
+                </button>
+              )}
+              {view !== "projects" && (
+                <button className="secondary-button" onClick={() => setView("projects")} type="button">
+                  {t("Open Projects", "打开项目")}
+                </button>
+              )}
+              <button className="ghost-button" onClick={() => void refreshAll()} type="button">
+                {t("Refresh", "刷新")}
               </button>
-            )}
-            {view !== "projects" && (
-              <button className="secondary-button" onClick={() => setView("projects")} type="button">
-                {t("Open Projects", "打开项目")}
-              </button>
-            )}
-            <button className="ghost-button" onClick={() => void refreshAll()} type="button">
-              {t("Refresh", "刷新")}
-            </button>
-          </div>
-        </header>
+            </div>
+          </header>
 
-        <div className="main__scroll">
+          <main className="main">
+            <div className="main__scroll main-scroll-root">
         {view === "dashboard" && (
           <section className="panel-grid dashboard-grid">
             <section className="panel panel--wide">
@@ -2660,8 +2664,10 @@ export default function App() {
             </section>
           </section>
         )}
-        </div>
-      </main>
+            </div>
+          </main>
+        </section>
+      </div>
     </div>
   );
 }
